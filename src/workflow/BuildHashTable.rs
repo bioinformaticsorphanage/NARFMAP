@@ -7,7 +7,12 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 use super::*;
 use std::path::PathBuf;
 pub fn flow(fasta: PathBuf) {
-    unsafe {
-        println!("flowing fasta: {:?}", timeval(12, 100));
-    }
+    println!("==================================================================");
+    println!("Building hash table from {fasta:?}");
+    println!("==================================================================");
+    // unsafe {
+    //     // println!("flowing fasta: {:?}", timeval(12, 100));
+    //     // generateHashTable(&bhtConfig, opts.argc(), const_cast<char**>(opts.argv()));
+    //     generateHashTable()
+    // }
 }

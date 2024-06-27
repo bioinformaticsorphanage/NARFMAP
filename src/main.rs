@@ -26,13 +26,16 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Index {
+        // FIXME This should be positional not a --fasta
         #[arg(short, long, value_name = "FILE")]
         fasta: PathBuf,
     },
 
     Align {
+        // FIXME This should be positional not a --fastq1
         #[arg(short, long, value_name = "FILE")]
         fastq1: PathBuf,
+        // FIXME This should be positional not a --fastq2
         #[arg(short, long, value_name = "FILE")]
         fastq2: Option<PathBuf>,
     },

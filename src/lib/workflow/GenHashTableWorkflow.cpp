@@ -279,10 +279,6 @@ void buildHashTable(const options::DragenOsOptions& opts)
   DRAGEN_OS_THREAD_CERR << "Version: " << common::Version::string() << std::endl;
   DRAGEN_OS_THREAD_CERR << "argc: " << opts.argc() << " argv: " << opts.getCommandLine() << std::endl;
 
-  std::cout << "==================================================================\n";
-  std::cout << "Building hash table from " << opts.htReference_ << "\n";
-  std::cout << "==================================================================\n";
-
   // Determine the type of hash table to generate
   std::vector<HashTableType> hashTableTypes;
   //  if (opts->BuildMethylatedHashtables()) {
