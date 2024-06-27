@@ -2,17 +2,15 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-extern "C" {
-    fn snappy_max_compressed_length(source_length: size_t) -> size_t;
-}
-
-#[cxx::bridge]
-pub(crate) mod ffi {
-    unsafe extern "C++" {
-        include!("include/workflow/GenHashTableWorkflow.hpp");
-        include!("include/workflow/Input2SamWorkflow.hpp");
-    }
-}
+mod workflow;
+use workflow::BuildHashTable;
+// #[cxx::bridge]
+// pub(crate) mod ffi {
+//     unsafe extern "C++" {
+//         include!("include/workflow/GenHashTableWorkflow.hpp");
+//         include!("include/workflow/Input2SamWorkflow.hpp");
+//     }
+// }
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -27,7 +25,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    BuildHashTable {
+    Index {
         #[arg(short, long, value_name = "FILE")]
         fasta: Option<PathBuf>,
     },
@@ -55,7 +53,9 @@ fn main() {
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
     match &cli.command {
-        Some(Commands::BuildHashTable { fasta: _ }) => {}
+        Some(Commands::Index { fasta: _ }) => {
+            let workflow = BuildHashTable::flow(fasta);
+        }
         Some(Commands::Align {
             fastq1: _,
             fastq2: _,

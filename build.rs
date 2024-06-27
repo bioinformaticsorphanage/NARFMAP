@@ -9,14 +9,14 @@ fn main() -> miette::Result<()> {
     assert!(status.success());
 
     // build dragen-os command and dragen static library
-    let status = Command::new("make")
-        .status()
-        .expect("failed to run \"make\"");
-    assert!(status.success());
+    // let status = Command::new("make")
+    //     .status()
+    //     .expect("failed to run \"make\"");
+    // assert!(status.success());
 
     // Link libraries
-    println!("cargo:rustc-link-lib=static={}", "dragen");
-    println!("cargo:rustc-link-lib=static={}", "dragen-os");
+    // println!("cargo:rustc-link-lib=static={}", "dragen");
+    // println!("cargo:rustc-link-lib=static={}", "dragen-os");
 
     Ok(())
 }
