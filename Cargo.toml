@@ -9,3 +9,4 @@ cxx = "1.0"
 
 [build-dependencies]
 miette = { version = "5", features = ["fancy"] } # optional but gives nicer error messages!
+bindgen = "0.65.1"
