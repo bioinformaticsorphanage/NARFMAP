@@ -20,19 +20,19 @@ struct Cli {
     debug: u8,
 
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     Index {
         #[arg(short, long, value_name = "FILE")]
-        fasta: Option<PathBuf>,
+        fasta: PathBuf,
     },
 
     Align {
         #[arg(short, long, value_name = "FILE")]
-        fastq1: Option<PathBuf>,
+        fastq1: PathBuf,
         #[arg(short, long, value_name = "FILE")]
         fastq2: Option<PathBuf>,
     },
@@ -52,15 +52,11 @@ fn main() {
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
-    match &cli.command {
-        Some(Commands::Index { fasta: _ }) => {
+    match cli.command {
+        Commands::Index { fasta } => {
             let workflow = BuildHashTable::flow(fasta);
         }
-        Some(Commands::Align {
-            fastq1: _,
-            fastq2: _,
-        }) => {}
-        None => {}
+        Commands::Align { fastq1, fastq2 } => {}
     }
 
     // Continued program logic goes here...
