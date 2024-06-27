@@ -1,0 +1,8 @@
+bin.name = "narfmap"
+args = "index --fasta example.fa"
+stdout = '''
+Debug mode is off
+==================================================================
+Building hash table from "example.fa"
+==================================================================
+'''
