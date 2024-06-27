@@ -6,6 +6,7 @@ edition = "2018"
 [dependencies]
 clap = { version = "4.4.11", features = ["derive"] }
 cxx = "1.0"
+trycmd = "0.15.4"
 
 [build-dependencies]
 miette = { version = "5", features = ["fancy"] } # optional but gives nicer error messages!
