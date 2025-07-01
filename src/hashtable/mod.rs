@@ -7,27 +7,22 @@ use log::{info, debug, warn};
 use rayon::prelude::*;
 
 use crate::config::{Config, HashTableConfig};
-use crate::reference::sequence::{ReferenceSequence, NucSeq, Nucleotide};
 use crate::reference::hashtable::{Hashtable as RefHashtable, HashtableConfig as RefHashtableConfig, HashTableType, HashtableData};
 
-/// CRC polynomial constants for k-mer hashing
-/// These match the CRC polynomials used in the original DRAGMAP implementation
-const CRC_POLYNOMIALS: [u64; 4] = [
-    0x1021, // CRC-16-CCITT
-    0x8005, // CRC-16-IBM
-    0x8408, // CRC-16-KERMIT  
-    0x8810, // CRC-16-DNP
-];
+mod crc_hash;
+pub use crc_hash::{CrcPolynomial, CrcHasher, KmerHasher};
 
 /// Hash table builder for generating hash tables from reference genomes
 pub struct HashTableBuilder {
     config: HashTableConfig,
+    kmer_hasher: KmerHasher,
 }
 
 impl HashTableBuilder {
     /// Create a new hash table builder with the given configuration
-    pub fn new(config: HashTableConfig) -> Self {
-        Self { config }
+    pub fn new(config: HashTableConfig) -> Result<Self> {
+        let kmer_hasher = KmerHasher::with_dragmap_defaults(config.seed_len)?;
+        Ok(Self { config, kmer_hasher })
     }
 
     /// Build a hash table from a reference FASTA file
@@ -80,7 +75,8 @@ impl HashTableBuilder {
         Ok(hash_table)
     }
 
-    /// Extract k-mers from a reference sequence
+    /// Extract k-mers from a reference sequence using efficient 2-bit encoding
+    /// This matches DRAGMAP's approach for k-mer extraction and position encoding
     fn extract_kmers(&self, sequence: &crate::io::sequence::Sequence, seq_idx: u64) -> Result<HashMap<u64, Vec<u64>>> {
         let mut kmers: HashMap<u64, Vec<u64>> = HashMap::new();
         let k = self.config.seed_len;
@@ -90,9 +86,16 @@ impl HashTableBuilder {
             return Ok(kmers);
         }
 
-        // Extract k-mers in parallel chunks
+        // Use DRAGMAP-style seed interval for sampling
+        let interval = self.config.ref_seed_interval.max(1.0) as usize;
+        
+        // Extract k-mers using efficient sliding window approach
         let chunk_size = 10000;
-        let positions: Vec<usize> = (0..=sequence.len() - k).collect();
+        let total_positions = sequence.len() - k + 1;
+        let positions: Vec<usize> = (0..total_positions).step_by(interval).collect();
+        
+        debug!("Extracting k-mers from sequence {} ({} bp) with interval {}, {} positions", 
+               sequence.id, sequence.len(), interval, positions.len());
         
         let chunk_results: Vec<HashMap<u64, Vec<u64>>> = positions
             .par_chunks(chunk_size)
@@ -100,17 +103,20 @@ impl HashTableBuilder {
                 let mut chunk_kmers: HashMap<u64, Vec<u64>> = HashMap::new();
                 
                 for &pos in chunk {
-                    if let Ok(kmer_seq) = NucSeq::from_str(&sequence.seq.to_string()[pos..pos + k]) {
-                        if let Ok(kmer_hash) = kmer_seq.to_2bit_kmer(k) {
-                            // Apply CRC hashing
-                            let crc_hash = self.apply_crc_hash(kmer_hash, self.config.crc_primary);
-                            
-                            // Encode position with sequence index
-                            let encoded_pos = (seq_idx << 32) | (pos as u64);
-                            
-                            chunk_kmers.entry(crc_hash)
-                                .or_insert_with(Vec::new)
-                                .push(encoded_pos);
+                    // Extract k-mer using direct 2-bit access for efficiency
+                    if let Some(kmer_subseq) = sequence.substring(pos, pos + k) {
+                        // Convert to 2-bit packed representation
+                        if let Ok(kmer_2bit) = self.extract_kmer_2bit(&kmer_subseq) {
+                            // Hash the k-mer using CRC
+                            if let Ok(crc_hash) = self.kmer_hasher.hash_kmer(kmer_2bit) {
+                                // Encode position with sequence index (DRAGMAP format)
+                                // Upper 32 bits: sequence index, lower 32 bits: position
+                                let encoded_pos = (seq_idx << 32) | (pos as u64);
+                                
+                                chunk_kmers.entry(crc_hash)
+                                    .or_insert_with(Vec::new)
+                                    .push(encoded_pos);
+                            }
                         }
                     }
                 }
@@ -128,29 +134,34 @@ impl HashTableBuilder {
             }
         }
 
+        debug!("Extracted {} unique k-mers from sequence {}", kmers.len(), sequence.id);
         Ok(kmers)
     }
 
-    /// Apply CRC hashing to a k-mer
-    fn apply_crc_hash(&self, kmer: u64, crc_index: u32) -> u64 {
-        if crc_index as usize >= CRC_POLYNOMIALS.len() {
-            return kmer; // Fall back to identity if invalid CRC index
+    /// Extract k-mer as 2-bit packed representation efficiently
+    /// This avoids string conversion and matches DRAGMAP's 2-bit encoding
+    fn extract_kmer_2bit(&self, kmer_seq: &crate::reference::sequence::NucSeq) -> Result<u64> {
+        if kmer_seq.len() > 32 {
+            return Err(anyhow!("K-mer too long for u64 encoding: {} bases", kmer_seq.len()));
         }
-
-        let polynomial = CRC_POLYNOMIALS[crc_index as usize];
-        let mut hash = kmer;
-
-        // Simple CRC-like hash transformation
-        for _ in 0..16 {
-            if hash & 0x8000000000000000 != 0 {
-                hash = (hash << 1) ^ polynomial;
-            } else {
-                hash <<= 1;
-            }
+        
+        let mut kmer_2bit = 0u64;
+        for i in 0..kmer_seq.len() {
+            let base_2bit = match kmer_seq.get(i) {
+                crate::reference::sequence::Nucleotide::A => 0u64,
+                crate::reference::sequence::Nucleotide::C => 1u64, 
+                crate::reference::sequence::Nucleotide::G => 2u64,
+                crate::reference::sequence::Nucleotide::T => 3u64,
+                crate::reference::sequence::Nucleotide::N => 2u64, // N treated as G (DRAGMAP compatible)
+            };
+            
+            // Pack in little-endian format (2 bits per base)
+            kmer_2bit |= base_2bit << (i * 2);
         }
-
-        hash
+        
+        Ok(kmer_2bit)
     }
+
 
     /// Filter k-mers by frequency to reduce hash table size
     fn filter_by_frequency(&self, mut entries: HashMap<u64, Vec<u64>>) -> Result<HashMap<u64, Vec<u64>>> {
@@ -220,12 +231,14 @@ impl HashTableBuilder {
 pub struct HashTableQuery {
     hashtable: RefHashtable,
     config: HashTableConfig,
+    kmer_hasher: KmerHasher,
 }
 
 impl HashTableQuery {
     /// Create a new hash table query interface
-    pub fn new(hashtable: RefHashtable, config: HashTableConfig) -> Self {
-        Self { hashtable, config }
+    pub fn new(hashtable: RefHashtable, config: HashTableConfig) -> Result<Self> {
+        let kmer_hasher = KmerHasher::with_dragmap_defaults(config.seed_len)?;
+        Ok(Self { hashtable, config, kmer_hasher })
     }
 
     /// Load a hash table from a directory
@@ -244,7 +257,7 @@ impl HashTableQuery {
         let data = HashtableData::InMemory(Vec::new());
         let hashtable = RefHashtable::new(ref_config, data, None);
 
-        Ok(Self::new(hashtable, config))
+        Self::new(hashtable, config)
     }
 
     /// Query the hash table for potential positions of a k-mer
@@ -254,36 +267,13 @@ impl HashTableQuery {
                               kmer.len(), self.config.seed_len));
         }
 
-        // Convert k-mer to hash value
-        let kmer_seq = NucSeq::from_bytes(kmer);
-        let kmer_hash = kmer_seq.to_2bit_kmer(self.config.seed_len)?;
-        
-        // Apply same CRC transformation as during building
-        let crc_hash = self.apply_crc_hash(kmer_hash, self.config.crc_primary);
+        // Convert k-mer to 2-bit representation and hash with CRC
+        let kmer_2bit = self.kmer_hasher.sequence_to_2bit(kmer)?;
+        let crc_hash = self.kmer_hasher.hash_kmer(kmer_2bit)?;
 
         // Query the hash table (placeholder implementation)
-        // TODO: Implement actual hash table lookup
+        // TODO: Implement actual hash table lookup from serialized data
         Ok(Vec::new())
-    }
-
-    /// Apply CRC hashing to a k-mer (same as in builder)
-    fn apply_crc_hash(&self, kmer: u64, crc_index: u32) -> u64 {
-        if crc_index as usize >= CRC_POLYNOMIALS.len() {
-            return kmer;
-        }
-
-        let polynomial = CRC_POLYNOMIALS[crc_index as usize];
-        let mut hash = kmer;
-
-        for _ in 0..16 {
-            if hash & 0x8000000000000000 != 0 {
-                hash = (hash << 1) ^ polynomial;
-            } else {
-                hash <<= 1;
-            }
-        }
-
-        hash
     }
 
     /// Get hash table statistics
@@ -310,7 +300,105 @@ impl Hashtable {
     }
 
     /// Create from a config (for compatibility)
-    pub fn from_config(config: HashTableConfig) -> Self {
+    pub fn from_config(_config: HashTableConfig) -> Self {
         Self { query: None }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_kmer_extraction_efficiency() {
+        // Test the new efficient k-mer extraction
+        let mut config = HashTableConfig::default();
+        config.seed_len = 16;
+        config.ref_seed_interval = 2.0; // Sample every 2 bases
+        config.max_seed_freq = 1000;
+        config.target_seed_freq = 100.0;
+        config.soft_seed_freq_cap = 200.0;
+        config.num_threads = 1;
+        
+        let builder = HashTableBuilder::new(config).unwrap();
+        
+        // Create a test sequence
+        let test_seq = crate::io::sequence::Sequence::new(
+            "test_seq".to_string(),
+            "ACGTACGTACGTACGTACGTACGTACGTACGT", // 32 bases
+            None
+        ).unwrap();
+        
+        // Extract k-mers
+        let kmers = builder.extract_kmers(&test_seq, 0).unwrap();
+        
+        // Should have extracted some k-mers (with interval=2, from 32-base seq with 16-mers)
+        // Positions: 0, 2, 4, 6, 8, 10, 12, 14, 16 (9 positions)
+        assert!(kmers.len() > 0);
+        assert!(kmers.len() <= 9); // Max 9 due to sampling interval
+        
+        // Verify positions are encoded correctly (seq_idx=0 in upper 32 bits)
+        for positions in kmers.values() {
+            for &pos in positions {
+                let seq_idx = pos >> 32;
+                let position = pos & 0xFFFFFFFF;
+                assert_eq!(seq_idx, 0);
+                assert!(position < 32); // Position should be within sequence
+            }
+        }
+    }
+    
+    #[test]
+    fn test_2bit_kmer_extraction() {
+        let mut config = HashTableConfig::default();
+        config.seed_len = 4;
+        config.ref_seed_interval = 1.0;
+        config.max_seed_freq = 1000;
+        config.target_seed_freq = 100.0;
+        config.soft_seed_freq_cap = 200.0;
+        config.num_threads = 1;
+        
+        let builder = HashTableBuilder::new(config).unwrap();
+        
+        // Test the direct 2-bit extraction method
+        let test_nuc_seq = crate::reference::sequence::NucSeq::from_str("ACGT").unwrap();
+        let kmer_2bit = builder.extract_kmer_2bit(&test_nuc_seq).unwrap();
+        
+        // ACGT = A(0) C(1) G(2) T(3) in 2-bit: 0b11100100 = 0xE4
+        assert_eq!(kmer_2bit & 0xFF, 0b11100100);
+    }
+    
+    #[test] 
+    fn test_load_test_fasta() {
+        // Test loading the actual tiny.fasta test file if it exists
+        let test_fasta_path = Path::new("data/tiny/tiny-2x1Xrepeats.v8/tiny.fasta");
+        
+        if test_fasta_path.exists() {
+            let sequences = crate::io::fasta::load_reference(test_fasta_path).unwrap();
+            assert!(sequences.len() > 0);
+            
+            let first_seq = &sequences[0];
+            assert!(first_seq.len() > 100); // Should have a decent length
+            assert!(first_seq.id.contains("phiX174")); // Should be phiX174
+            
+            // Test k-mer extraction on real data
+            let mut config = HashTableConfig::default();
+            config.seed_len = 21;
+            config.ref_seed_interval = 4.0; // Sample every 4 bases
+            config.max_seed_freq = 1000;
+            config.target_seed_freq = 100.0;
+            config.soft_seed_freq_cap = 200.0;
+            config.num_threads = 1;
+            
+            let builder = HashTableBuilder::new(config).unwrap();
+            let kmers = builder.extract_kmers(first_seq, 0).unwrap();
+            
+            assert!(kmers.len() > 0);
+            println!("Extracted {} unique k-mers from {} bp sequence", 
+                     kmers.len(), first_seq.len());
+        } else {
+            println!("Test FASTA file not found, skipping integration test");
+        }
     }
 } 
