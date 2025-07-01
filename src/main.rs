@@ -135,11 +135,30 @@ fn run_build_hash_table(args: &Commands) -> Result<()> {
         if *decompress {
             info!("Decompressing existing hash table");
             // TODO: Implement hash table decompression
-        } else {
-            // TODO: Implement hash table building
+            return Err(anyhow::anyhow!("Hash table decompression not yet implemented"));
         }
         
+        // Create hash table configuration
+        let mut hash_config = config::HashTableConfig::default();
+        hash_config.seed_len = *kmer_size;
+        hash_config.num_threads = *threads;
+        
+        // Create output directory next to reference file
+        let output_dir = reference.parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("hash_table");
+        
+        info!("Output directory: {}", output_dir.display());
+        
+        // Build the hash table
+        let builder = hashtable::HashTableBuilder::new(hash_config)
+            .with_context(|| "Failed to create hash table builder")?;
+        
+        let _hash_table = builder.build_from_fasta(reference, &output_dir)
+            .with_context(|| format!("Failed to build hash table from reference: {}", reference.display()))?;
+        
         info!("Hash table generation complete");
+        info!("Hash table files saved in: {}", output_dir.display());
         Ok(())
     } else {
         unreachable!("Command dispatch error");
@@ -151,24 +170,124 @@ fn run_align(args: &Commands, output_dir: &Option<PathBuf>, output_prefix: &str)
         info!("Aligning reads to reference in directory: {}", reference_dir.display());
         info!("FASTQ file 1: {}", fastq1.display());
         
+        // Create alignment configuration
+        let mut align_config = config::AlignmentConfig::default();
+        align_config.num_threads = *threads;
+        
+        // Initialize the aligner
+        let aligner = align::Aligner::new(align_config, reference_dir)
+            .with_context(|| format!("Failed to initialize aligner with reference directory: {}", reference_dir.display()))?;
+        
+        // Determine output SAM file path
+        let output_file = if let Some(dir) = output_dir {
+            dir.join(format!("{}.sam", output_prefix))
+        } else {
+            PathBuf::from(format!("{}.sam", output_prefix))
+        };
+        
+        info!("Output file: {}", output_file.display());
+        
+        // Create SAM writer
+        let mut sam_writer = align::sam::SamWriter::new(&output_file)
+            .with_context(|| format!("Failed to create SAM output file: {}", output_file.display()))?;
+        
+        // Write SAM header (placeholder reference sequences)
+        let ref_sequences = vec![("reference".to_string(), 1000000)]; // TODO: Get actual reference info
+        sam_writer.write_header(&ref_sequences)?;
+        
         if let Some(fastq2) = fastq2 {
             info!("FASTQ file 2: {}", fastq2.display());
             info!("Running paired-end alignment");
-            // TODO: Implement paired-end alignment
+            
+            // Read paired-end files
+            let mut reader1 = io::fastq::FastqReader::from_path(fastq1)
+                .with_context(|| format!("Failed to open FASTQ file: {}", fastq1.display()))?;
+            let mut reader2 = io::fastq::FastqReader::from_path(fastq2)
+                .with_context(|| format!("Failed to open FASTQ file: {}", fastq2.display()))?;
+            
+            let mut read_count = 0;
+            let mut aligned_count = 0;
+            
+            // Process reads in pairs
+            let iter1 = reader1.iter_sequences();
+            let iter2 = reader2.iter_sequences();
+            
+            for (read1_result, read2_result) in iter1.zip(iter2) {
+                let read1 = read1_result?;
+                let read2 = read2_result?;
+                
+                read_count += 2;
+                
+                // Align both reads
+                let (alignment1, alignment2) = aligner.align_paired_reads(&read1, &read2)?;
+                
+                // Write alignments or unmapped reads
+                match alignment1 {
+                    Some(ref align) => {
+                        sam_writer.write_alignment(align, &read1.sequence_string(), &read1.quality_string())?;
+                        aligned_count += 1;
+                    }
+                    None => {
+                        sam_writer.write_unmapped(&read1.id, &read1.sequence_string(), &read1.quality_string())?;
+                    }
+                }
+                
+                match alignment2 {
+                    Some(ref align) => {
+                        sam_writer.write_alignment(align, &read2.sequence_string(), &read2.quality_string())?;
+                        aligned_count += 1;
+                    }
+                    None => {
+                        sam_writer.write_unmapped(&read2.id, &read2.sequence_string(), &read2.quality_string())?;
+                    }
+                }
+                
+                if read_count % 10000 == 0 {
+                    info!("Processed {} reads, {} aligned", read_count, aligned_count);
+                }
+            }
+            
+            info!("Processed {} total reads, {} aligned ({:.1}%)", 
+                  read_count, aligned_count, (aligned_count as f64 / read_count as f64) * 100.0);
         } else {
             info!("Running single-end alignment");
-            // TODO: Implement single-end alignment
+            
+            // Read single-end file
+            let mut reader = io::fastq::FastqReader::from_path(fastq1)
+                .with_context(|| format!("Failed to open FASTQ file: {}", fastq1.display()))?;
+            
+            let mut read_count = 0;
+            let mut aligned_count = 0;
+            
+            for read_result in reader.iter_sequences() {
+                let read = read_result?;
+                read_count += 1;
+                
+                // Align the read
+                let alignment = aligner.align_read(&read)?;
+                
+                // Write alignment or unmapped read
+                match alignment {
+                    Some(ref align) => {
+                        sam_writer.write_alignment(align, &read.sequence_string(), &read.quality_string())?;
+                        aligned_count += 1;
+                    }
+                    None => {
+                        sam_writer.write_unmapped(&read.id, &read.sequence_string(), &read.quality_string())?;
+                    }
+                }
+                
+                if read_count % 10000 == 0 {
+                    info!("Processed {} reads, {} aligned", read_count, aligned_count);
+                }
+            }
+            
+            info!("Processed {} total reads, {} aligned ({:.1}%)", 
+                  read_count, aligned_count, (aligned_count as f64 / read_count as f64) * 100.0);
         }
         
-        info!("Using {} threads", threads);
-        info!("Read Group ID: {}", rgid);
-        if let Some(sample) = rgsm {
-            info!("Read Group Sample: {}", sample);
-        }
-        
-        // TODO: Implement alignment logic
-        
-        info!("Alignment complete");
+        sam_writer.flush()?;
+        info!("Alignment complete. Output written to: {}", output_file.display());
         Ok(())
     } else {
         unreachable!("Command dispatch error");
@@ -181,17 +300,17 @@ fn run_info(input: &PathBuf, num_sequences: usize) -> Result<()> {
     
     if path_str.ends_with(".fasta") || path_str.ends_with(".fa") || path_str.ends_with(".fna") {
         // Handle FASTA file
-        info!("Analyzing FASTA file: {}", path_str);
+        println!("Analyzing FASTA file: {}", path_str);
         let sequences = crate::io::fasta::load_reference(input)?;
         
-        info!("FASTA file contains {} sequences", sequences.len());
+        println!("FASTA file contains {} sequences", sequences.len());
         
         for (i, seq) in sequences.into_iter().take(num_sequences).enumerate() {
-            info!("Sequence #{}: {} ({} bp)", i+1, seq.id, seq.len());
+            println!("Sequence #{}: {} ({} bp)", i+1, seq.id, seq.len());
         }
     } else if path_str.ends_with(".fastq") || path_str.ends_with(".fq") {
         // Handle FASTQ file
-        info!("Analyzing FASTQ file: {}", path_str);
+        println!("Analyzing FASTQ file: {}", path_str);
         let mut reader = crate::io::fastq::FastqReader::from_path(input)?;
         
         let mut count = 0;
@@ -204,13 +323,13 @@ fn run_info(input: &PathBuf, num_sequences: usize) -> Result<()> {
             total_length += seq.len();
             
             if displayed < num_sequences {
-                info!("Read #{}: {} ({} bp)", displayed+1, seq.id, seq.len());
+                println!("Read #{}: {} ({} bp)", displayed+1, seq.id, seq.len());
                 displayed += 1;
             }
         }
         
         let avg_length = if count > 0 { total_length as f64 / count as f64 } else { 0.0 };
-        info!("FASTQ file contains {} reads with average length {:.1} bp", count, avg_length);
+        println!("FASTQ file contains {} reads with average length {:.1} bp", count, avg_length);
     } else {
         return Err(anyhow::anyhow!("Unsupported file format. Please provide a FASTA or FASTQ file."));
     }

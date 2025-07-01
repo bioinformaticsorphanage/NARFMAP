@@ -44,6 +44,10 @@ cxx = "1.0"
 criterion = "0.5"       # For benchmarking
 tempfile = "3.8"        # For creating temporary test files
 test-case = "3.3"       # For parameterized tests
+assert_cmd = "2.0"      # CLI command testing
+assert_fs = "1.0"       # Filesystem assertions
+predicates = "3.0"      # Better assertions
+serial_test = "3.0"     # For tests that can't run in parallel
 
 [build-dependencies]
 miette = { version = "5", features = ["fancy"] } # For nice error messages
