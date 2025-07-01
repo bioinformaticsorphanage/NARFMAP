@@ -405,37 +405,70 @@ impl HashTableQuery {
 
     /// Query the hash table for potential positions of a k-mer
     pub fn query_kmer(&self, kmer: &[u8]) -> Result<Vec<u64>> {
+        let kmer_str = String::from_utf8_lossy(kmer);
+        debug!("=== HASH TABLE QUERY ===");
+        debug!("Query k-mer: {} (length: {})", kmer_str, kmer.len());
+        debug!("Configured k-mer size: {}", self.config.seed_len);
+        
         if kmer.len() != self.config.seed_len {
+            warn!("K-mer length {} does not match expected length {}", kmer.len(), self.config.seed_len);
             return Err(anyhow!("K-mer length {} does not match expected length {}", 
                               kmer.len(), self.config.seed_len));
         }
 
         // Convert k-mer to 2-bit representation and hash with CRC
         let kmer_2bit = self.kmer_hasher.sequence_to_2bit(kmer)?;
+        debug!("K-mer 2-bit encoding: {:016x}", kmer_2bit);
+        
         let crc_hash = self.kmer_hasher.hash_kmer(kmer_2bit)?;
-
-        debug!("Querying k-mer hash {:016x} in {} buckets", crc_hash, self.num_buckets);
+        debug!("CRC hash: {:016x}", crc_hash);
 
         // Calculate bucket index using the same logic as in build_bucket_table
         let squeeze_factor = 1u64;
         let virtual_addr = self.kmer_hasher.get_address_from_hash(crc_hash, squeeze_factor);
+        debug!("Virtual address: {:016x}", virtual_addr);
+        
         let bucket_idx = (virtual_addr >> HashtableTraits::HASH_BUCKET_BYTES_LOG2) as usize % self.num_buckets;
+        debug!("Bucket index: {} (of {} total buckets)", bucket_idx, self.num_buckets);
         
         // Extract the hash bits we're looking for (bits 35-57, same as in builder)
         let target_hash_bits = ((crc_hash >> 35) & 0x7FFFFF) as u32;
-        
-        debug!("Looking in bucket {} for hash bits {:06x}", bucket_idx, target_hash_bits);
+        debug!("Target hash bits: {:06x} (from CRC bits 35-57)", target_hash_bits);
         
         let mut positions = Vec::new();
         
         if bucket_idx < self.buckets.len() {
             let bucket = &self.buckets[bucket_idx];
+            debug!("Searching bucket {} contents:", bucket_idx);
+            
+            // First, show what's in the bucket
+            let mut occupied_records = 0;
+            for i in 0..8 {
+                if let Some(record) = bucket.get(i) {
+                    if !record.is_empty() {
+                        occupied_records += 1;
+                        debug!("  Record {}: type={:?}, hash_bits={:06x}, pos={:?}", 
+                               i, record.record_type(), record.hash_bits(), record.reference_position());
+                    }
+                }
+            }
+            
+            if occupied_records == 0 {
+                debug!("  Bucket is empty!");
+            } else {
+                debug!("  Bucket has {} occupied records", occupied_records);
+            }
             
             // Search through all records in the bucket
             for i in 0..8 { // 8 records per bucket
                 if let Some(record) = bucket.get(i) {
-                    // Check if this record matches our target hash
-                    if record.hash_bits() == target_hash_bits {
+                    if !record.is_empty() {
+                        debug!("  Checking record {}: hash_bits={:06x} vs target={:06x}", 
+                               i, record.hash_bits(), target_hash_bits);
+                        
+                        // Check if this record matches our target hash
+                        if record.hash_bits() == target_hash_bits {
+                            debug!("  *** HASH MATCH FOUND in record {} ***", i);
                         match record.record_type() {
                             RecordType::Hit => {
                                 if let Some(ref_pos) = record.reference_position() {
@@ -461,6 +494,9 @@ impl HashTableQuery {
                             _ => {
                                 debug!("Found other record type: {:?}", record.record_type());
                             }
+                        }
+                        } else {
+                            debug!("  No hash match: {:06x} != {:06x}", record.hash_bits(), target_hash_bits);
                         }
                     }
                 }

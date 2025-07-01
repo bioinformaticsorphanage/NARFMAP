@@ -1,5 +1,5 @@
 use std::path::Path;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use log::{info, debug, warn};
 
 use crate::config::{AlignmentConfig, HashTableConfig};
@@ -42,10 +42,29 @@ pub struct Aligner {
 
 impl Aligner {
     /// Create a new aligner with hash table and configuration
-    pub fn new(config: AlignmentConfig, hash_table_dir: &Path) -> Result<Self> {
+    pub fn new(mut config: AlignmentConfig, hash_table_dir: &Path) -> Result<Self> {
         info!("Loading hash table from: {}", hash_table_dir.display());
         
-        let hash_table_config = HashTableConfig::default(); // TODO: Load from config file
+        // Load the actual hash table configuration
+        let config_path = hash_table_dir.join("hash_table.cfg");
+        if !config_path.exists() {
+            return Err(anyhow!("Hash table configuration not found: {}", config_path.display()));
+        }
+        
+        // Read the config to get the actual k-mer size
+        let config_content = std::fs::read_to_string(&config_path)?;
+        let hash_table_meta: serde_json::Value = serde_json::from_str(&config_content)?;
+        let actual_kmer_size = hash_table_meta["kmer_size"].as_u64().unwrap_or(21) as usize;
+        
+        info!("Hash table k-mer size: {}", actual_kmer_size);
+        info!("Alignment config k-mer size: {} -> {}", config.seed_len, actual_kmer_size);
+        
+        // Update alignment config to match hash table
+        config.seed_len = actual_kmer_size;
+        
+        let mut hash_table_config = HashTableConfig::default();
+        hash_table_config.seed_len = actual_kmer_size;
+        
         let hash_table = HashTableQuery::load_from_dir(hash_table_dir, hash_table_config.clone())?;
         
         let kmer_hasher = KmerHasher::with_dragmap_defaults(hash_table_config.seed_len)?;
@@ -72,8 +91,8 @@ impl Aligner {
         
         // Find seed hits in the hash table
         let mut all_hits = Vec::new();
-        for (position, seed_seq) in seeds {
-            if let Ok(hits) = self.find_seed_hits(&seed_seq, position) {
+        for (position, seed_seq, is_reverse) in seeds {
+            if let Ok(hits) = self.find_seed_hits(&seed_seq, position, is_reverse) {
                 all_hits.extend(hits);
             }
         }
@@ -115,40 +134,74 @@ impl Aligner {
         }
     }
     
-    /// Extract k-mer seeds from a read
-    fn extract_seeds(&self, read: &Sequence) -> Result<Vec<(usize, Vec<u8>)>> {
+    /// Extract k-mer seeds from a read (both forward and reverse complement)
+    fn extract_seeds(&self, read: &Sequence) -> Result<Vec<(usize, Vec<u8>, bool)>> {
         let mut seeds = Vec::new();
         let k = self.config.seed_len;
         
         if read.len() < k {
+            debug!("Read {} too short ({} bp) for k-mer size {}", read.id, read.len(), k);
             return Ok(seeds);
         }
         
         // Extract seeds with configurable step size
         let step = self.config.seed_step_size.max(1);
+        debug!("Extracting {}-mers from read {} ({} bp) with step size {}", k, read.id, read.len(), step);
         
         for i in (0..=read.len() - k).step_by(step) {
             if let Some(kmer_seq) = read.substring(i, i + k) {
                 // Convert to raw sequence bytes
                 let mut kmer_bytes = Vec::with_capacity(k);
+                let mut has_n = false;
                 for j in 0..k {
-                    kmer_bytes.push(match kmer_seq.get(j) {
+                    let base = match kmer_seq.get(j) {
                         crate::reference::sequence::Nucleotide::A => b'A',
                         crate::reference::sequence::Nucleotide::C => b'C',
                         crate::reference::sequence::Nucleotide::G => b'G',
                         crate::reference::sequence::Nucleotide::T => b'T',
-                        crate::reference::sequence::Nucleotide::N => b'N',
-                    });
+                        crate::reference::sequence::Nucleotide::N => {
+                            has_n = true;
+                            b'N'
+                        },
+                    };
+                    kmer_bytes.push(base);
                 }
-                seeds.push((i, kmer_bytes));
+                
+                // Skip k-mers with N bases for now
+                if !has_n {
+                    let kmer_str = String::from_utf8_lossy(&kmer_bytes);
+                    debug!("Extracted k-mer at position {}: {}", i, kmer_str);
+                    
+                    // Add forward orientation (is_reverse = false)
+                    seeds.push((i, kmer_bytes.clone(), false));
+                    
+                    // Add reverse complement (is_reverse = true)
+                    let mut rev_comp = Vec::with_capacity(k);
+                    for &base in kmer_bytes.iter().rev() {
+                        let comp_base = match base {
+                            b'A' => b'T',
+                            b'T' => b'A',
+                            b'C' => b'G',
+                            b'G' => b'C',
+                            _ => base, // Keep N as N
+                        };
+                        rev_comp.push(comp_base);
+                    }
+                    let rev_comp_str = String::from_utf8_lossy(&rev_comp);
+                    debug!("Extracted reverse complement at position {}: {}", i, rev_comp_str);
+                    seeds.push((i, rev_comp, true));
+                } else {
+                    debug!("Skipping k-mer at position {} due to N base", i);
+                }
             }
         }
         
+        debug!("Extracted {} valid seeds from read {}", seeds.len(), read.id);
         Ok(seeds)
     }
     
     /// Find hits for a k-mer seed in the hash table
-    fn find_seed_hits(&self, seed: &[u8], read_position: usize) -> Result<Vec<SeedHit>> {
+    fn find_seed_hits(&self, seed: &[u8], read_position: usize, is_reverse: bool) -> Result<Vec<SeedHit>> {
         let positions = self.hash_table.query_kmer(seed)?;
         
         let mut hits = Vec::new();
@@ -160,7 +213,7 @@ impl Aligner {
                 read_position,
                 reference_position,
                 sequence_id,
-                is_reverse: false, // TODO: Detect reverse complement
+                is_reverse,
             });
         }
         

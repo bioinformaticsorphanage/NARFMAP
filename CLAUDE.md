@@ -117,3 +117,6 @@ The `src/include/` and `src/lib/` directories contain the original C++ implement
 - Memory-map large files with `memmap2`
 - Optimize hot paths identified through profiling
 - Target performance parity with C++ implementation
+
+### Project Status Notes
+- The remaining tasks (linear probing, reference names, alignment extension) are optimizations and enhancements rather than core functionality fixes.
