@@ -10,7 +10,12 @@ use crate::config::{Config, HashTableConfig};
 use crate::reference::hashtable::{Hashtable as RefHashtable, HashtableConfig as RefHashtableConfig, HashTableType, HashtableData};
 
 mod crc_hash;
+mod hash_record;
+mod bucket;
+
 pub use crc_hash::{CrcPolynomial, CrcHasher, KmerHasher};
+pub use hash_record::{HashRecord, RecordType};
+pub use bucket::{Bucket, HashtableTraits};
 
 /// Hash table builder for generating hash tables from reference genomes
 pub struct HashTableBuilder {
@@ -185,6 +190,91 @@ impl HashTableBuilder {
         Ok(entries)
     }
 
+    /// Build bucket-based hash table from k-mer entries
+    fn build_bucket_table(&self, entries: HashMap<u64, Vec<u64>>) -> Result<Vec<Bucket>> {
+        // Calculate hash table size based on CRC bits
+        let table_size_bits = self.config.crc_primary as usize;
+        let squeeze_factor = 1u64; // Start with no squeeze
+        let num_buckets = (1u64 << (table_size_bits - 6)) as usize; // 2^(bits-6) buckets (64 bytes each)
+        
+        info!("Building hash table with {} buckets ({} MB)", 
+              num_buckets, (num_buckets * 64) / (1024 * 1024));
+        
+        // Initialize buckets
+        let mut buckets: Vec<Bucket> = vec![Bucket::new(); num_buckets];
+        let mut collision_count = 0u64;
+        let mut chain_count = 0u64;
+        
+        // Process each k-mer and its positions
+        for (kmer_hash, positions) in entries.iter() {
+            // Get virtual address and bucket index
+            let virtual_addr = self.kmer_hasher.get_address_from_hash(*kmer_hash, squeeze_factor);
+            let bucket_idx = (virtual_addr >> HashtableTraits::HASH_BUCKET_BYTES_LOG2) as usize % num_buckets;
+            
+            // Extract hash bits for the record (bits 35-57)
+            let hash_bits = ((*kmer_hash >> 35) & 0x7FFFFF) as u32;
+            
+            // Get thread ID from virtual address
+            let thread_id = self.kmer_hasher.get_thread_id_from_address(virtual_addr);
+            
+            // Handle high-frequency k-mers
+            if positions.len() > self.config.max_seed_freq as usize {
+                // Create HIFREQ record
+                let hifreq_record = HashRecord::hifreq(
+                    thread_id,
+                    hash_bits,
+                    false, // not extended
+                    false, // not last
+                    false, // no random sample
+                    false, // not alt
+                    positions.len() as u32
+                );
+                
+                // Try to insert in bucket
+                if !self.insert_record_in_bucket(&mut buckets[bucket_idx], hifreq_record) {
+                    collision_count += 1;
+                    // TODO: Implement linear probing or chaining
+                }
+                continue;
+            }
+            
+            // Create HIT records for each position
+            for (i, &encoded_pos) in positions.iter().enumerate() {
+                let seq_idx = (encoded_pos >> 32) as u32;
+                let position = (encoded_pos & 0xFFFFFFFF) as u32;
+                let is_last = i == positions.len() - 1;
+                
+                let hit_record = HashRecord::hit(
+                    thread_id,
+                    hash_bits,
+                    false, // not extended (primary seeds)
+                    is_last,
+                    false, // TODO: detect reverse complement
+                    position
+                );
+                
+                // Try to insert in bucket
+                if !self.insert_record_in_bucket(&mut buckets[bucket_idx], hit_record) {
+                    collision_count += 1;
+                    // TODO: Implement linear probing for overflow
+                }
+            }
+        }
+        
+        info!("Hash table built: {} collisions, {} chains", collision_count, chain_count);
+        Ok(buckets)
+    }
+    
+    /// Insert a record into a bucket, returns true if successful
+    fn insert_record_in_bucket(&self, bucket: &mut Bucket, record: HashRecord) -> bool {
+        if let Some(slot) = bucket.find_empty_slot() {
+            bucket.set(slot, record).unwrap();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Serialize hash table to disk
     fn serialize_hash_table(
         &self,
@@ -192,6 +282,21 @@ impl HashTableBuilder {
         reference_path: &Path,
         output_dir: &Path,
     ) -> Result<RefHashtable> {
+        // Build bucket-based hash table
+        let buckets = self.build_bucket_table(entries)?;
+        
+        // Create binary file for hash table
+        let hash_table_path = output_dir.join("hash_table.bin");
+        let mut file = std::fs::File::create(&hash_table_path)?;
+        
+        // Write buckets to file
+        use std::io::Write;
+        for bucket in buckets.iter() {
+            file.write_all(&bucket.to_bytes())?;
+        }
+        
+        info!("Wrote hash table to: {}", hash_table_path.display());
+        
         // Create configuration for the reference hashtable
         let ref_config = RefHashtableConfig::new(
             self.config.seed_len,
@@ -201,26 +306,13 @@ impl HashTableBuilder {
             self.config.num_threads,
         );
 
-        // Convert HashMap to Vec<u64> for storage
-        let mut hash_data = Vec::new();
-        
-        // Simple serialization format: [kmer_hash, position_count, position1, position2, ...]
-        for (kmer_hash, positions) in entries.iter() {
-            hash_data.push(*kmer_hash);
-            hash_data.push(positions.len() as u64);
-            hash_data.extend(positions.iter());
-        }
-
-        info!("Serialized {} hash table entries into {} u64 values", 
-              entries.len(), hash_data.len());
-
-        // Create hash table data
-        let data = HashtableData::InMemory(hash_data);
-
         // Save configuration to file
         let config_path = output_dir.join("hash_table.cfg");
         ref_config.save(&config_path)?;
         info!("Saved hash table configuration to: {}", config_path.display());
+
+        // Create hash table data (using empty in-memory for now)
+        let data = HashtableData::InMemory(Vec::new());
 
         // Create and return the hash table
         Ok(RefHashtable::new(ref_config, data, None))
@@ -400,5 +492,62 @@ mod tests {
         } else {
             println!("Test FASTA file not found, skipping integration test");
         }
+    }
+    
+    #[test]
+    fn test_bucket_table_construction() {
+        let mut config = HashTableConfig::default();
+        config.seed_len = 16;
+        config.crc_primary = 16; // Small table for testing
+        config.max_seed_freq = 10;
+        
+        let builder = HashTableBuilder::new(config).unwrap();
+        
+        // Create some test k-mer entries
+        let mut entries = HashMap::new();
+        
+        // Add a normal frequency k-mer
+        entries.insert(0x123456789ABCDEF0, vec![0x100, 0x200, 0x300]);
+        
+        // Add a high-frequency k-mer
+        entries.insert(0xFEDCBA9876543210, vec![0x1000; 15]); // 15 positions > max_seed_freq
+        
+        // Build bucket table
+        let buckets = builder.build_bucket_table(entries).unwrap();
+        
+        // Should have 2^(16-6) = 1024 buckets
+        assert_eq!(buckets.len(), 1024);
+        
+        // Check that some buckets have records
+        let non_empty_count = buckets.iter()
+            .filter(|b| b.count_occupied() > 0)
+            .count();
+        assert!(non_empty_count > 0);
+    }
+    
+    #[test]
+    fn test_hash_record_in_bucket() {
+        let mut bucket = Bucket::new();
+        
+        // Add different types of records
+        let hit1 = HashRecord::hit(1, 0x12345, false, false, false, 1000);
+        let hit2 = HashRecord::hit(2, 0x54321, true, true, true, 2000);
+        let hifreq = HashRecord::hifreq(3, 0xABCDE, false, false, false, false, 100);
+        
+        bucket.set(0, hit1).unwrap();
+        bucket.set(1, hit2).unwrap();
+        bucket.set(2, hifreq).unwrap();
+        
+        // Verify records
+        assert_eq!(bucket[0].record_type(), RecordType::Hit);
+        assert_eq!(bucket[0].reference_position(), Some(1000));
+        
+        assert_eq!(bucket[1].record_type(), RecordType::Hit);
+        assert!(bucket[1].is_extended());
+        assert!(bucket[1].is_last_in_thread());
+        assert!(bucket[1].is_reverse_complement());
+        
+        assert_eq!(bucket[2].record_type(), RecordType::HiFreq);
+        assert_eq!(bucket[2].frequency(), Some(100));
     }
 } 
