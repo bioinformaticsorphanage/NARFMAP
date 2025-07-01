@@ -195,7 +195,10 @@ impl HashTableBuilder {
         // Calculate hash table size based on CRC bits
         let table_size_bits = self.config.crc_primary as usize;
         let squeeze_factor = 1u64; // Start with no squeeze
-        let num_buckets = (1u64 << (table_size_bits - 6)) as usize; // 2^(bits-6) buckets (64 bytes each)
+        
+        // Ensure minimum table size to avoid underflow
+        let effective_bits = table_size_bits.max(10); // Minimum 10 bits
+        let num_buckets = (1u64 << (effective_bits - 6)) as usize; // 2^(bits-6) buckets (64 bytes each)
         
         info!("Building hash table with {} buckets ({} MB)", 
               num_buckets, (num_buckets * 64) / (1024 * 1024));
@@ -324,32 +327,80 @@ pub struct HashTableQuery {
     hashtable: RefHashtable,
     config: HashTableConfig,
     kmer_hasher: KmerHasher,
+    buckets: Vec<Bucket>,
+    num_buckets: usize,
 }
 
 impl HashTableQuery {
-    /// Create a new hash table query interface
-    pub fn new(hashtable: RefHashtable, config: HashTableConfig) -> Result<Self> {
+    /// Create a new hash table query interface with loaded buckets
+    pub fn new(hashtable: RefHashtable, config: HashTableConfig, buckets: Vec<Bucket>) -> Result<Self> {
         let kmer_hasher = KmerHasher::with_dragmap_defaults(config.seed_len)?;
-        Ok(Self { hashtable, config, kmer_hasher })
+        let num_buckets = buckets.len();
+        Ok(Self { hashtable, config, kmer_hasher, buckets, num_buckets })
     }
 
     /// Load a hash table from a directory
     pub fn load_from_dir<P: AsRef<Path>>(dir_path: P, config: HashTableConfig) -> Result<Self> {
         let dir_path = dir_path.as_ref();
         let config_path = dir_path.join("hash_table.cfg");
+        let bin_path = dir_path.join("hash_table.bin");
 
         if !config_path.exists() {
             return Err(anyhow!("Hash table configuration not found: {}", config_path.display()));
         }
 
+        if !bin_path.exists() {
+            return Err(anyhow!("Hash table binary not found: {}", bin_path.display()));
+        }
+
         // Load configuration
         let ref_config = RefHashtableConfig::load(&config_path)?;
+        info!("Loaded hash table config: k-mer size {}", ref_config.kmer_size);
         
-        // For now, create empty hash table (actual loading will be implemented later)
-        let data = HashtableData::InMemory(Vec::new());
+        // Load binary hash table data
+        let buckets = Self::load_buckets_from_file(&bin_path, &config)?;
+        info!("Loaded {} buckets from {}", buckets.len(), bin_path.display());
+        
+        // Create hash table with loaded data
+        let data = HashtableData::InMemory(Vec::new()); // We use buckets instead
         let hashtable = RefHashtable::new(ref_config, data, None);
 
-        Self::new(hashtable, config)
+        Self::new(hashtable, config, buckets)
+    }
+
+    /// Load buckets from the binary hash table file
+    fn load_buckets_from_file<P: AsRef<Path>>(bin_path: P, config: &HashTableConfig) -> Result<Vec<Bucket>> {
+        use std::fs::File;
+        use std::io::Read;
+        
+        let mut file = File::open(bin_path.as_ref())?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        
+        debug!("Read {} bytes from hash table file", buffer.len());
+        
+        // Each bucket is 64 bytes (8 records * 8 bytes each)
+        const BUCKET_SIZE: usize = 64;
+        if buffer.len() % BUCKET_SIZE != 0 {
+            return Err(anyhow!("Invalid hash table file: size {} is not divisible by bucket size {}", 
+                              buffer.len(), BUCKET_SIZE));
+        }
+        
+        let num_buckets = buffer.len() / BUCKET_SIZE;
+        let mut buckets = Vec::with_capacity(num_buckets);
+        
+        // Parse buckets from binary data
+        for i in 0..num_buckets {
+            let start = i * BUCKET_SIZE;
+            let end = start + BUCKET_SIZE;
+            let bucket_bytes: [u8; 64] = buffer[start..end].try_into()
+                .map_err(|_| anyhow!("Failed to extract bucket {} from binary data", i))?;
+            
+            buckets.push(Bucket::from_bytes(&bucket_bytes));
+        }
+        
+        info!("Successfully loaded {} buckets", num_buckets);
+        Ok(buckets)
     }
 
     /// Query the hash table for potential positions of a k-mer
@@ -363,9 +414,61 @@ impl HashTableQuery {
         let kmer_2bit = self.kmer_hasher.sequence_to_2bit(kmer)?;
         let crc_hash = self.kmer_hasher.hash_kmer(kmer_2bit)?;
 
-        // Query the hash table (placeholder implementation)
-        // TODO: Implement actual hash table lookup from serialized data
-        Ok(Vec::new())
+        debug!("Querying k-mer hash {:016x} in {} buckets", crc_hash, self.num_buckets);
+
+        // Calculate bucket index using the same logic as in build_bucket_table
+        let squeeze_factor = 1u64;
+        let virtual_addr = self.kmer_hasher.get_address_from_hash(crc_hash, squeeze_factor);
+        let bucket_idx = (virtual_addr >> HashtableTraits::HASH_BUCKET_BYTES_LOG2) as usize % self.num_buckets;
+        
+        // Extract the hash bits we're looking for (bits 35-57, same as in builder)
+        let target_hash_bits = ((crc_hash >> 35) & 0x7FFFFF) as u32;
+        
+        debug!("Looking in bucket {} for hash bits {:06x}", bucket_idx, target_hash_bits);
+        
+        let mut positions = Vec::new();
+        
+        if bucket_idx < self.buckets.len() {
+            let bucket = &self.buckets[bucket_idx];
+            
+            // Search through all records in the bucket
+            for i in 0..8 { // 8 records per bucket
+                if let Some(record) = bucket.get(i) {
+                    // Check if this record matches our target hash
+                    if record.hash_bits() == target_hash_bits {
+                        match record.record_type() {
+                            RecordType::Hit => {
+                                if let Some(ref_pos) = record.reference_position() {
+                                    // Reconstruct the encoded position (sequence_id in upper 32 bits, position in lower 32)
+                                    // For now, assume sequence_id = 0 since we don't store it in the record
+                                    let encoded_pos = (0u64 << 32) | (ref_pos as u64);
+                                    positions.push(encoded_pos);
+                                    
+                                    debug!("Found HIT: position {}", ref_pos);
+                                    
+                                    // If this is the last record in a chain, stop
+                                    if record.is_last_in_thread() {
+                                        break;
+                                    }
+                                }
+                            }
+                            RecordType::HiFreq => {
+                                debug!("Found HIFREQ record with frequency {}", record.frequency().unwrap_or(0));
+                                // For high-frequency k-mers, we might skip them or handle specially
+                                // For now, just return empty to avoid overwhelming results
+                                break;
+                            }
+                            _ => {
+                                debug!("Found other record type: {:?}", record.record_type());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        debug!("Found {} positions for k-mer", positions.len());
+        Ok(positions)
     }
 
     /// Get hash table statistics

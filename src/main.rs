@@ -178,18 +178,12 @@ fn run_align(args: &Commands, output_dir: &Option<PathBuf>, output_prefix: &str)
         let aligner = align::Aligner::new(align_config, reference_dir)
             .with_context(|| format!("Failed to initialize aligner with reference directory: {}", reference_dir.display()))?;
         
-        // Determine output SAM file path
-        let output_file = if let Some(dir) = output_dir {
-            dir.join(format!("{}.sam", output_prefix))
-        } else {
-            PathBuf::from(format!("{}.sam", output_prefix))
-        };
+        // For now, output SAM to stdout (like most aligners)
+        // TODO: Add proper output file options to CLI
         
-        info!("Output file: {}", output_file.display());
-        
-        // Create SAM writer
-        let mut sam_writer = align::sam::SamWriter::new(&output_file)
-            .with_context(|| format!("Failed to create SAM output file: {}", output_file.display()))?;
+        // Create SAM writer to stdout
+        let mut sam_writer = align::sam::SamWriter::new_stdout()
+            .with_context(|| "Failed to create SAM output to stdout")?;
         
         // Write SAM header (placeholder reference sequences)
         let ref_sequences = vec![("reference".to_string(), 1000000)]; // TODO: Get actual reference info
@@ -287,7 +281,7 @@ fn run_align(args: &Commands, output_dir: &Option<PathBuf>, output_prefix: &str)
         }
         
         sam_writer.flush()?;
-        info!("Alignment complete. Output written to: {}", output_file.display());
+        info!("Alignment complete. Output written to stdout");
         Ok(())
     } else {
         unreachable!("Command dispatch error");

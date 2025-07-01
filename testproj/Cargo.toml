@@ -1,0 +1,7 @@
+[package]
+name = "testproj"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+seq_io = "0.3.3"

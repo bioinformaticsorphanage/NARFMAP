@@ -24,14 +24,21 @@ pub mod sam_flags {
 
 /// SAM file writer
 pub struct SamWriter {
-    writer: BufWriter<File>,
+    writer: BufWriter<Box<dyn Write>>,
 }
 
 impl SamWriter {
     /// Create a new SAM writer
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::create(path)?;
-        let writer = BufWriter::new(file);
+        let writer = BufWriter::new(Box::new(file) as Box<dyn Write>);
+        Ok(Self { writer })
+    }
+
+    /// Create a new SAM writer that outputs to stdout
+    pub fn new_stdout() -> Result<Self> {
+        use std::io::stdout;
+        let writer = BufWriter::new(Box::new(stdout()) as Box<dyn Write>);
         Ok(Self { writer })
     }
 

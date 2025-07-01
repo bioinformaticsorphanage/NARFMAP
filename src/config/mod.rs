@@ -41,8 +41,8 @@ impl Default for HashTableConfig {
             max_ext_incr: 12,
             num_threads: 8,
             mem_limit_gb: 32,
-            crc_primary: 0,
-            crc_extended: 0,
+            crc_primary: 20, // 20 bits for reasonable hash table size
+            crc_extended: 54, // 54 bits for extended hashing
         }
     }
 }
@@ -68,6 +68,12 @@ pub struct AlignmentConfig {
     pub max_secondary_aligns: u32,
     /// Score delta for secondary alignments (default: 0)
     pub secondary_score_delta: i32,
+    /// Seed length for alignment (default: 21)
+    pub seed_len: usize,
+    /// Step size for extracting seeds from reads (default: 1)
+    pub seed_step_size: usize,
+    /// Maximum distance to cluster seed hits (default: 1000)
+    pub cluster_distance: u32,
 }
 
 impl Default for AlignmentConfig {
@@ -84,6 +90,9 @@ impl Default for AlignmentConfig {
                 .unwrap_or(4),
             max_secondary_aligns: 0,
             secondary_score_delta: 0,
+            seed_len: 21,
+            seed_step_size: 1,
+            cluster_distance: 1000,
         }
     }
 }
@@ -261,8 +270,9 @@ impl Config {
     }
 
     /// Apply command-line overrides
-    pub fn override_from_cli(&mut self, args: &crate::Cli) {
-        self.verbosity = args.verbose;
+    pub fn override_from_cli(&mut self, _args: &()) {
+        // TODO: Implement CLI overrides when Cli struct is accessible
+        // self.verbosity = args.verbose;
         // Additional CLI overrides can be added here as needed
     }
 } 

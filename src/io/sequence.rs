@@ -48,6 +48,19 @@ impl Sequence {
         }
     }
 
+    /// Get sequence as string
+    pub fn sequence_string(&self) -> String {
+        self.seq.to_string()
+    }
+
+    /// Get quality scores as string
+    pub fn quality_string(&self) -> String {
+        match &self.qual {
+            Some(qual_bytes) => String::from_utf8_lossy(qual_bytes).to_string(),
+            None => "*".to_string(),
+        }
+    }
+
     /// Reverse complement the sequence
     pub fn reverse_complement(&self) -> Self {
         Self {
