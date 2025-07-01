@@ -79,10 +79,12 @@ src/
 - ✅ CLI interface and argument parsing
 - ✅ Basic I/O modules for FASTA/FASTQ
 - ✅ Logging and error handling setup
-- ❌ Hash table generation (returns `unimplemented!()`)
+- ✅ Configuration system with DRAGMAP-compatible parameters
+- ✅ CRC-based k-mer hashing with 2-bit nucleotide encoding
+- ✅ Reference sequence processing (FASTA loading, k-mer extraction)
+- 🔄 Hash table generation (core structures implemented, serialization pending)
 - ❌ Alignment algorithms (returns `unimplemented!()`)
-- ❌ Reference sequence processing
-- ❌ Comprehensive test suite
+- ✅ Unit and integration test framework
 
 ### Critical Implementation Needs
 1. **Hash table generation**: Core k-mer indexing functionality
@@ -108,6 +110,7 @@ The `src/include/` and `src/lib/` directories contain the original C++ implement
 3. Use `cargo test` for validation
 4. Profile with `cargo bench` for performance
 5. Compare output with legacy C++ implementation for correctness
+6. **Make small, focused commits**: Commit related changes together in logical groups for easier review and debugging
 
 ### Performance Considerations
 - Use `rayon` for parallel processing
