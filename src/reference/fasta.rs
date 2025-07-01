@@ -5,7 +5,7 @@ use anyhow::{Result, Context};
 
 use super::sequence::{ReferenceSequence, ReferenceSequences};
 use crate::io::fasta as fasta_io;
-use crate::io::sequence::Sequence as IoSequence;
+// use crate::io::sequence::Sequence as IoSequence; // Unused for now
 
 #[derive(Error, Debug)]
 pub enum FastaError {

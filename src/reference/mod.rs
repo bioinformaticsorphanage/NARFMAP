@@ -24,7 +24,7 @@ pub struct ReferenceDir {
 
 impl ReferenceDir {
     /// Create a new ReferenceDir from a directory path
-    pub fn new<P: AsRef<Path>>(path: P, mmap_reference: bool, load_reference: bool) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(_path: P, _mmap_reference: bool, _load_reference: bool) -> Result<Self> {
         // This is a placeholder implementation that will be filled in later
         unimplemented!("ReferenceDir::new not yet implemented")
     }

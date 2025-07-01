@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter, Read, Write};
-use anyhow::{Result, Context};
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use memmap2::Mmap;
 
@@ -109,11 +109,11 @@ impl Hashtable {
 
     /// Build a new hash table from a reference sequence
     pub fn build(
-        reference: &ReferenceSequence,
-        kmer_size: usize,
-        hash_type: HashTableType,
-        threads: usize,
-        output_dir: PathBuf,
+        _reference: &ReferenceSequence,
+        _kmer_size: usize,
+        _hash_type: HashTableType,
+        _threads: usize,
+        _output_dir: PathBuf,
     ) -> Result<Self> {
         // This is a placeholder implementation
         // TODO: Implement the actual hash table generation algorithm
@@ -126,7 +126,7 @@ impl Hashtable {
     }
 
     /// Map a k-mer to the hash table and find potential reference positions
-    pub fn map_kmer(&self, kmer: &[u8]) -> Result<Vec<u64>> {
+    pub fn map_kmer(&self, _kmer: &[u8]) -> Result<Vec<u64>> {
         // This is a placeholder implementation
         // TODO: Implement k-mer mapping
         unimplemented!("K-mer mapping not yet implemented");

@@ -1,12 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufWriter, Write};
+// use std::fs::File;
+// use std::io::{BufWriter, Write}; // Unused for now
 use anyhow::{Result, anyhow};
 use log::{info, debug, warn};
 use rayon::prelude::*;
 
-use crate::config::{Config, HashTableConfig};
+use crate::config::HashTableConfig;
 use crate::reference::hashtable::{Hashtable as RefHashtable, HashtableConfig as RefHashtableConfig, HashTableType, HashtableData};
 
 mod crc_hash;
@@ -206,7 +206,7 @@ impl HashTableBuilder {
         // Initialize buckets
         let mut buckets: Vec<Bucket> = vec![Bucket::new(); num_buckets];
         let mut collision_count = 0u64;
-        let mut chain_count = 0u64;
+        let chain_count = 0u64;
         
         // Process each k-mer and its positions
         for (kmer_hash, positions) in entries.iter() {
@@ -243,7 +243,7 @@ impl HashTableBuilder {
             
             // Create HIT records for each position
             for (i, &encoded_pos) in positions.iter().enumerate() {
-                let seq_idx = (encoded_pos >> 32) as u32;
+                let _seq_idx = (encoded_pos >> 32) as u32;
                 let position = (encoded_pos & 0xFFFFFFFF) as u32;
                 let is_last = i == positions.len() - 1;
                 
@@ -324,7 +324,7 @@ impl HashTableBuilder {
 
 /// Hash table query interface for alignment
 pub struct HashTableQuery {
-    hashtable: RefHashtable,
+    _hashtable: RefHashtable,
     config: HashTableConfig,
     kmer_hasher: KmerHasher,
     buckets: Vec<Bucket>,
@@ -336,7 +336,7 @@ impl HashTableQuery {
     pub fn new(hashtable: RefHashtable, config: HashTableConfig, buckets: Vec<Bucket>) -> Result<Self> {
         let kmer_hasher = KmerHasher::with_dragmap_defaults(config.seed_len)?;
         let num_buckets = buckets.len();
-        Ok(Self { hashtable, config, kmer_hasher, buckets, num_buckets })
+        Ok(Self { _hashtable: hashtable, config, kmer_hasher, buckets, num_buckets })
     }
 
     /// Load a hash table from a directory
@@ -369,7 +369,7 @@ impl HashTableQuery {
     }
 
     /// Load buckets from the binary hash table file
-    fn load_buckets_from_file<P: AsRef<Path>>(bin_path: P, config: &HashTableConfig) -> Result<Vec<Bucket>> {
+    fn load_buckets_from_file<P: AsRef<Path>>(bin_path: P, _config: &HashTableConfig) -> Result<Vec<Bucket>> {
         use std::fs::File;
         use std::io::Read;
         
@@ -474,7 +474,8 @@ impl HashTableQuery {
     /// Get hash table statistics
     pub fn get_stats(&self) -> HashMap<String, u64> {
         let mut stats = HashMap::new();
-        stats.insert("size_bytes".to_string(), self.hashtable.size_bytes() as u64);
+        // stats.insert("size_bytes".to_string(), self._hashtable.size_bytes() as u64);
+        stats.insert("size_bytes".to_string(), 0u64); // TODO: Calculate actual size
         stats.insert("kmer_size".to_string(), self.config.seed_len as u64);
         stats.insert("max_seed_freq".to_string(), self.config.max_seed_freq as u64);
         stats
@@ -485,18 +486,18 @@ impl HashTableQuery {
 /// This is kept for backward compatibility with existing code
 #[deprecated(note = "Use HashTableBuilder and HashTableQuery instead")]
 pub struct Hashtable {
-    query: Option<HashTableQuery>,
+    _query: Option<HashTableQuery>,
 }
 
 #[allow(deprecated)]
 impl Hashtable {
     pub fn new() -> Self {
-        Self { query: None }
+        Self { _query: None }
     }
 
     /// Create from a config (for compatibility)
     pub fn from_config(_config: HashTableConfig) -> Self {
-        Self { query: None }
+        Self { _query: None }
     }
 }
 

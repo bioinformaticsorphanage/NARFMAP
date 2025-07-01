@@ -1,13 +1,10 @@
 use std::path::Path;
-use std::collections::HashMap;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use log::{info, debug, warn};
 
-use crate::config::{Config, AlignmentConfig, HashTableConfig};
+use crate::config::{AlignmentConfig, HashTableConfig};
 use crate::hashtable::{HashTableQuery, KmerHasher};
-use crate::io::fastq::FastqReader;
 use crate::io::sequence::Sequence;
-use crate::reference::sequence::NucSeq;
 
 pub mod sam;
 
@@ -40,7 +37,7 @@ pub struct SeedHit {
 pub struct Aligner {
     config: AlignmentConfig,
     hash_table: HashTableQuery,
-    kmer_hasher: KmerHasher,
+    _kmer_hasher: KmerHasher,
 }
 
 impl Aligner {
@@ -56,7 +53,7 @@ impl Aligner {
         Ok(Self {
             config,
             hash_table,
-            kmer_hasher,
+            _kmer_hasher: kmer_hasher,
         })
     }
 
@@ -202,7 +199,7 @@ impl Aligner {
     }
     
     /// Select the best alignment from clustered hits
-    fn select_best_alignment(&self, read: &Sequence, mut clusters: Vec<Vec<SeedHit>>) -> Result<Option<SeedHit>> {
+    fn select_best_alignment(&self, _read: &Sequence, mut clusters: Vec<Vec<SeedHit>>) -> Result<Option<SeedHit>> {
         if clusters.is_empty() {
             return Ok(None);
         }

@@ -130,8 +130,8 @@ impl CrcHasher {
 /// K-mer hasher that converts DNA sequences to CRC hash values
 pub struct KmerHasher {
     primary_hasher: CrcHasher,
-    secondary_hasher: Option<CrcHasher>,
-    kmer_bits: usize,
+    _secondary_hasher: Option<CrcHasher>,
+    _kmer_bits: usize,
 }
 
 impl KmerHasher {
@@ -161,8 +161,8 @@ impl KmerHasher {
 
         Ok(Self {
             primary_hasher: CrcHasher::new(primary_poly),
-            secondary_hasher: secondary_poly.map(CrcHasher::new),
-            kmer_bits,
+            _secondary_hasher: secondary_poly.map(CrcHasher::new),
+            _kmer_bits: kmer_bits,
         })
     }
 
@@ -213,7 +213,7 @@ impl KmerHasher {
 
     /// Hash an extended k-mer using the secondary CRC polynomial
     pub fn hash_extended_kmer(&self, kmer_data: &[u8]) -> Result<Vec<u8>> {
-        match &self.secondary_hasher {
+        match &self._secondary_hasher {
             Some(hasher) => hasher.hash(kmer_data),
             None => Err(anyhow!("No secondary hasher configured")),
         }

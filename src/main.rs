@@ -3,7 +3,7 @@ use std::process;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use log::{debug, info, warn, error};
+use log::{debug, info, error};
 
 mod reference;
 mod align;
@@ -165,8 +165,8 @@ fn run_build_hash_table(args: &Commands) -> Result<()> {
     }
 }
 
-fn run_align(args: &Commands, output_dir: &Option<PathBuf>, output_prefix: &str) -> Result<()> {
-    if let Commands::Align { reference_dir, fastq1, fastq2, threads, rgid, rgsm } = args {
+fn run_align(args: &Commands, _output_dir: &Option<PathBuf>, _output_prefix: &str) -> Result<()> {
+    if let Commands::Align { reference_dir, fastq1, fastq2, threads, rgid: _, rgsm: _ } = args {
         info!("Aligning reads to reference in directory: {}", reference_dir.display());
         info!("FASTQ file 1: {}", fastq1.display());
         

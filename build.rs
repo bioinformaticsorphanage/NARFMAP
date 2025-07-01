@@ -1,4 +1,4 @@
-use std::process::Command;
+// use std::process::Command; // Unused for now
 
 fn main() -> miette::Result<()> {
     println!("cargo:rerun-if-changed=Makefile");

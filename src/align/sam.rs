@@ -1,8 +1,8 @@
 use std::io::{BufWriter, Write};
 use std::fs::File;
 use std::path::Path;
-use anyhow::{Result, anyhow};
-use log::{info, debug};
+use anyhow::Result;
+// use log::{info, debug}; // Unused for now
 
 use super::AlignmentResult;
 
