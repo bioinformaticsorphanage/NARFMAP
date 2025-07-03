@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use memmap2::Mmap;
@@ -64,12 +64,63 @@ impl HashtableConfig {
         Ok(())
     }
 
-    /// Load the configuration from a file
+    /// Load the configuration from a file (DRAGMAP format)
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path)?;
+        use std::io::{BufRead, BufReader};
+        use anyhow::anyhow;
+        
+        let file = File::open(&path)?;
         let reader = BufReader::new(file);
-        let config = serde_json::from_reader(reader)?;
-        Ok(config)
+        
+        let mut kmer_size = 21; // Default
+        let mut reference_path = PathBuf::new();
+        let mut output_dir = PathBuf::new();
+        let mut threads = 1;
+        
+        for line in reader.lines() {
+            let line = line?;
+            let line = line.trim();
+            
+            // Skip comments and empty lines
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            
+            // Parse key = value format
+            if let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('\'').trim_matches('"');
+                
+                match key {
+                    "pri_seed_bases" => kmer_size = value.parse()?,
+                    "reference_source" => reference_path = PathBuf::from(value),
+                    "hash_table" => {
+                        // Extract output directory from hash table path
+                        if let Some(parent) = PathBuf::from(value).parent() {
+                            output_dir = parent.to_path_buf();
+                        }
+                    },
+                    "num_threads" => threads = value.parse()?,
+                    _ => {} // Ignore other keys
+                }
+            }
+        }
+        
+        if reference_path.as_os_str().is_empty() {
+            return Err(anyhow!("Missing reference_source in config file"));
+        }
+        
+        if output_dir.as_os_str().is_empty() {
+            output_dir = path.as_ref().parent().unwrap_or(Path::new(".")).to_path_buf();
+        }
+        
+        Ok(Self::new(
+            kmer_size,
+            HashTableType::Normal,
+            reference_path,
+            output_dir,
+            threads,
+        ))
     }
 }
 

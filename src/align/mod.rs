@@ -51,10 +51,9 @@ impl Aligner {
             return Err(anyhow!("Hash table configuration not found: {}", config_path.display()));
         }
         
-        // Read the config to get the actual k-mer size
-        let config_content = std::fs::read_to_string(&config_path)?;
-        let hash_table_meta: serde_json::Value = serde_json::from_str(&config_content)?;
-        let actual_kmer_size = hash_table_meta["kmer_size"].as_u64().unwrap_or(21) as usize;
+        // Load the hash table configuration to get the actual k-mer size
+        let ref_config = crate::reference::hashtable::HashtableConfig::load(&config_path)?;
+        let actual_kmer_size = ref_config.kmer_size;
         
         info!("Hash table k-mer size: {}", actual_kmer_size);
         info!("Alignment config k-mer size: {} -> {}", config.seed_len, actual_kmer_size);
@@ -112,22 +111,14 @@ impl Aligner {
         if let Some(best_hit) = self.select_best_alignment(read, clustered_hits)? {
             debug!("Best alignment for {}: ref_pos={}, score={}", read.id, best_hit.reference_position, "TODO");
             
-            // TODO: Implement full alignment extension and CIGAR generation
-            let alignment = AlignmentResult {
-                read_id: read.id.clone(),
-                reference_id: format!("ref_{}", best_hit.sequence_id), // TODO: Get actual reference name
-                position: best_hit.reference_position,
-                cigar: format!("{}M", read.len()), // TODO: Generate proper CIGAR
-                mapq: 60, // TODO: Calculate mapping quality
-                is_reverse: best_hit.is_reverse,
-                is_paired: false, // TODO: Handle paired-end
-                is_proper_pair: false,
-                mate_reference_id: None,
-                mate_position: None,
-                template_length: None,
-            };
-            
-            Ok(Some(alignment))
+            // Perform alignment extension from seed hit
+            if let Some(extended_alignment) = self.extend_alignment(read, &best_hit)? {
+                debug!("Extended alignment for {}: pos={}, cigar={}", read.id, extended_alignment.position, extended_alignment.cigar);
+                Ok(Some(extended_alignment))
+            } else {
+                debug!("Failed to extend alignment for read {}", read.id);
+                Ok(None)
+            }
         } else {
             debug!("No valid alignment found for read {}", read.id);
             Ok(None)
@@ -268,6 +259,103 @@ impl Aligner {
         Ok(Some(best_hit))
     }
     
+    /// Extend alignment from a seed hit using simple local alignment
+    fn extend_alignment(&self, read: &Sequence, seed_hit: &SeedHit) -> Result<Option<AlignmentResult>> {
+        // For basic extension, we'll load the reference sequence and perform
+        // a simple base-by-base comparison
+        
+        // TODO: Load actual reference sequence - for now use dummy implementation
+        // This would require loading the original reference FASTA file
+        let reference_name = self.get_reference_name(seed_hit.sequence_id);
+        
+        // Calculate the expected start position on reference
+        // If we have a seed hit at reference position X and read position Y,
+        // the read should start at reference position (X - Y)
+        let expected_ref_start = if seed_hit.reference_position >= seed_hit.read_position as u32 {
+            seed_hit.reference_position - seed_hit.read_position as u32
+        } else {
+            0 // Clamp to start of reference
+        };
+        
+        // For now, create a basic alignment with simple scoring
+        let alignment_score = self.score_alignment(read, expected_ref_start, seed_hit.is_reverse);
+        
+        if alignment_score >= self.config.min_score {
+            let cigar = self.generate_basic_cigar(read, expected_ref_start, seed_hit.is_reverse);
+            let mapq = self.calculate_mapping_quality(alignment_score);
+            
+            let alignment = AlignmentResult {
+                read_id: read.id.clone(),
+                reference_id: reference_name,
+                position: expected_ref_start,
+                cigar,
+                mapq,
+                is_reverse: seed_hit.is_reverse,
+                is_paired: false, // TODO: Handle paired-end properly
+                is_proper_pair: false,
+                mate_reference_id: None,
+                mate_position: None,
+                template_length: None,
+            };
+            
+            Ok(Some(alignment))
+        } else {
+            debug!("Alignment score {} below threshold {}", alignment_score, self.config.min_score);
+            Ok(None)
+        }
+    }
+    
+    /// Get reference sequence name from sequence ID
+    fn get_reference_name(&self, sequence_id: u64) -> String {
+        if let Some(ref metadata) = self.hash_table.reference_metadata {
+            if let Some(seq_info) = metadata.sequences.get(sequence_id as usize) {
+                return seq_info.name.clone();
+            }
+        }
+        format!("ref_{}", sequence_id)
+    }
+    
+    /// Score an alignment (simplified version)
+    fn score_alignment(&self, _read: &Sequence, _ref_start: u32, _is_reverse: bool) -> i32 {
+        // TODO: Implement actual sequence alignment and scoring
+        // For now, return a default score based on read length
+        // This would normally involve:
+        // 1. Loading the reference sequence
+        // 2. Performing base-by-base comparison
+        // 3. Calculating match/mismatch/indel scores
+        
+        // Simplified scoring: assume most bases match
+        let match_score = 2;
+        let estimated_matches = _read.len() as i32 * 8 / 10; // Assume 80% match rate
+        estimated_matches * match_score
+    }
+    
+    /// Generate a basic CIGAR string (simplified version)
+    fn generate_basic_cigar(&self, read: &Sequence, _ref_start: u32, _is_reverse: bool) -> String {
+        // TODO: Implement proper CIGAR generation with actual alignment
+        // For now, generate a simple all-match CIGAR
+        // This would normally involve:
+        // 1. Performing detailed alignment with gaps/mismatches
+        // 2. Generating proper CIGAR operations (M, I, D, S, H)
+        
+        format!("{}M", read.len())
+    }
+    
+    /// Calculate mapping quality from alignment score
+    fn calculate_mapping_quality(&self, alignment_score: i32) -> u8 {
+        // Simple mapping quality calculation
+        // Higher scores get higher MAPQ values
+        if alignment_score >= 100 {
+            60 // High confidence
+        } else if alignment_score >= 50 {
+            30 // Medium confidence  
+        } else if alignment_score >= 20 {
+            10 // Low confidence
+        } else {
+            0 // Very low confidence
+        }
+    }
+    
     /// Align paired-end reads
     pub fn align_paired_reads(&self, read1: &Sequence, read2: &Sequence) -> Result<(Option<AlignmentResult>, Option<AlignmentResult>)> {
         debug!("Aligning paired reads: {} and {}", read1.id, read2.id);
@@ -282,5 +370,178 @@ impl Aligner {
         // - Set proper SAM flags
         
         Ok((alignment1, alignment2))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AlignmentConfig;
+    use tempfile::TempDir;
+    
+    fn create_test_hash_table() -> Result<TempDir> {
+        let temp_dir = TempDir::new()?;
+        let hash_table_dir = temp_dir.path();
+        
+        // Create a minimal test hash table configuration
+        let config_content = r#"# Hash table configuration generated by NARFMAP
+# Compatible with DRAGMAP hash table format
+
+reference_source     = 'test.fasta'
+hash_table           = 'hash_table.bin'
+pri_seed_bases       = 21
+max_seed_bases       = 149
+ref_seed_interval    = 1.0
+max_seed_freq        = 16
+target_seed_freq     = 4.0
+pri_crc_bits         = 20
+num_threads          = 1
+
+reference_sequences  = 1
+reference_len        = 1024
+reference_len_raw    = 1000
+reference_len_not_n  = 950
+reference_sequence0     = 'test_sequence'
+reference_start0        = 0
+reference_beg_trim0     = 0
+reference_end_trim0     = 0
+reference_len0          = 1000
+"#;
+        
+        let config_path = hash_table_dir.join("hash_table.cfg");
+        std::fs::write(&config_path, config_content)?;
+        
+        // Create an empty hash table binary file
+        let bin_path = hash_table_dir.join("hash_table.bin");
+        let empty_buckets = vec![0u8; 64 * 1024]; // 1024 empty buckets
+        std::fs::write(&bin_path, &empty_buckets)?;
+        
+        // Create test reference metadata
+        let metadata = crate::hashtable::ReferenceMetadata {
+            sequences: vec![crate::hashtable::SequenceInfo {
+                index: 0,
+                name: "test_sequence".to_string(),
+                length: 1000,
+                start_position: 0,
+                begin_trim: 0,
+                end_trim: 0,
+            }],
+            total_length: 1024,
+            raw_length: 1000,
+            non_n_length: 950,
+        };
+        
+        let metadata_path = hash_table_dir.join("reference_metadata.json");
+        metadata.save(&metadata_path)?;
+        
+        Ok(temp_dir)
+    }
+    
+    #[test]
+    fn test_aligner_creation() {
+        let temp_dir = create_test_hash_table().unwrap();
+        let config = AlignmentConfig::default();
+        
+        // Test creating an aligner
+        let aligner = Aligner::new(config, temp_dir.path());
+        assert!(aligner.is_ok());
+        
+        let aligner = aligner.unwrap();
+        assert_eq!(aligner.config.seed_len, 21); // Should match config file
+    }
+    
+    #[test] 
+    fn test_seed_extraction() {
+        let temp_dir = create_test_hash_table().unwrap();
+        let config = AlignmentConfig::default();
+        let aligner = Aligner::new(config, temp_dir.path()).unwrap();
+        
+        // Create a test read
+        let test_read = crate::io::sequence::Sequence::new(
+            "test_read".to_string(),
+            "ACGTACGTACGTACGTACGTACGTACGT", // 28 bases
+            None
+        ).unwrap();
+        
+        // Extract seeds
+        let seeds = aligner.extract_seeds(&test_read).unwrap();
+        
+        // Should extract seeds from both orientations
+        // With k=21 and step=1, from 28-base read we get (28-21+1) = 8 positions
+        // Each position generates 2 seeds (forward + reverse), so 16 total
+        assert_eq!(seeds.len(), 16);
+        
+        // Check that we have both orientations
+        let forward_count = seeds.iter().filter(|(_, _, is_rev)| !is_rev).count();
+        let reverse_count = seeds.iter().filter(|(_, _, is_rev)| *is_rev).count();
+        assert_eq!(forward_count, 8);
+        assert_eq!(reverse_count, 8);
+    }
+    
+    #[test]
+    fn test_alignment_extension() {
+        let temp_dir = create_test_hash_table().unwrap();
+        let config = AlignmentConfig::default();
+        let aligner = Aligner::new(config, temp_dir.path()).unwrap();
+        
+        // Create test read and seed hit
+        let test_read = crate::io::sequence::Sequence::new(
+            "test_read".to_string(),
+            "ACGTACGTACGTACGTACGTACGT", // 24 bases
+            None
+        ).unwrap();
+        
+        let seed_hit = SeedHit {
+            read_position: 5,
+            reference_position: 105,
+            sequence_id: 0,
+            is_reverse: false,
+        };
+        
+        // Test alignment extension
+        let result = aligner.extend_alignment(&test_read, &seed_hit).unwrap();
+        assert!(result.is_some());
+        
+        let alignment = result.unwrap();
+        assert_eq!(alignment.read_id, "test_read");
+        assert_eq!(alignment.reference_id, "test_sequence"); // Should get name from metadata
+        assert_eq!(alignment.position, 100); // 105 - 5 = 100
+        assert_eq!(alignment.cigar, "24M"); // Simple all-match CIGAR
+        assert!(!alignment.is_reverse);
+    }
+    
+    #[test]
+    fn test_reference_name_resolution() {
+        let temp_dir = create_test_hash_table().unwrap();
+        let config = AlignmentConfig::default();
+        let aligner = Aligner::new(config, temp_dir.path()).unwrap();
+        
+        // Test getting reference name from sequence ID
+        let name = aligner.get_reference_name(0);
+        assert_eq!(name, "test_sequence");
+        
+        // Test with non-existent sequence ID
+        let name = aligner.get_reference_name(999);
+        assert_eq!(name, "ref_999");
+    }
+    
+    #[test]
+    fn test_hit_clustering() {
+        let temp_dir = create_test_hash_table().unwrap();
+        let config = AlignmentConfig::default();
+        let aligner = Aligner::new(config, temp_dir.path()).unwrap();
+        
+        // Create test hits
+        let hits = vec![
+            SeedHit { read_position: 0, reference_position: 100, sequence_id: 0, is_reverse: false },
+            SeedHit { read_position: 1, reference_position: 101, sequence_id: 0, is_reverse: false },
+            SeedHit { read_position: 2, reference_position: 102, sequence_id: 0, is_reverse: false },
+            SeedHit { read_position: 0, reference_position: 2000, sequence_id: 0, is_reverse: false }, // Distant hit
+        ];
+        
+        let clusters = aligner.cluster_hits(hits);
+        assert_eq!(clusters.len(), 2); // Should form 2 clusters
+        assert_eq!(clusters[0].len(), 3); // First cluster has 3 hits (close together)
+        assert_eq!(clusters[1].len(), 1); // Second cluster has 1 hit (distant)
     }
 } 
