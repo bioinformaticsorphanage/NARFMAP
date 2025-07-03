@@ -1,0 +1,15 @@
+{
+  "sequences": [
+    {
+      "index": 0,
+      "name": "gi|9626372|ref|NC_001422.1| Enterobacteria phage phiX174 sensu lato, complete genome",
+      "length": 639,
+      "start_position": 0,
+      "begin_trim": 0,
+      "end_trim": 0
+    }
+  ],
+  "total_length": 639,
+  "raw_length": 639,
+  "non_n_length": 639
+}
