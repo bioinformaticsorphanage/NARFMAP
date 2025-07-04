@@ -37,6 +37,9 @@ bincode = "1.3"         # Efficient binary serialization
 flate2 = "1.0"          # Gzip compression
 memmap2 = "0.9"         # Memory mapping for files
 
+# Date and time handling
+chrono = { version = "0.4", features = ["serde"] }  # Date/time for SAM headers
+
 # For FFI interop during transition (if needed)
 cxx = "1.0"
 

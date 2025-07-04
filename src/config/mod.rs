@@ -72,6 +72,8 @@ pub struct AlignmentConfig {
     pub seed_len: usize,
     /// Step size for extracting seeds from reads (default: 1)
     pub seed_step_size: usize,
+    /// Maximum seed frequency before attempting extension (default: 16)
+    pub max_seed_freq: u32,
     /// Maximum distance to cluster seed hits (default: 1000)
     pub cluster_distance: u32,
 }
@@ -92,6 +94,7 @@ impl Default for AlignmentConfig {
             secondary_score_delta: 0,
             seed_len: 21,
             seed_step_size: 1,
+            max_seed_freq: 16,
             cluster_distance: 1000,
         }
     }
