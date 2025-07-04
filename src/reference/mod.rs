@@ -1,6 +1,7 @@
 pub mod sequence;
 pub mod fasta;
 pub mod hashtable;
+pub mod liftover;
 
 use std::path::Path;
 use anyhow::Result;
@@ -8,6 +9,7 @@ use anyhow::Result;
 pub use sequence::ReferenceSequence;
 pub use hashtable::{HashtableConfig, Hashtable};
 pub use fasta::FastaReference;
+pub use liftover::{LiftoverManager, LiftoverGroup, LiftoverNode, LiftCode, ContigInfo};
 
 /// Loads a reference genome from a FASTA file
 pub fn load_reference<P: AsRef<Path>>(path: P) -> Result<FastaReference> {

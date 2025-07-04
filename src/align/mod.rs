@@ -6,6 +6,7 @@ use log::{info, debug, warn};
 use crate::config::{AlignmentConfig, HashTableConfig};
 use crate::hashtable::{HashTableQuery, KmerHasher};
 use crate::io::sequence::Sequence;
+use crate::reference::{LiftoverManager, LiftCode};
 
 pub use stats::AlignmentStats;
 pub use smith_waterman::{SmithWatermanAligner, CigarOp as SwCigarOp};
@@ -37,6 +38,10 @@ pub struct SeedHit {
     pub reference_position: u32,
     pub sequence_id: u64,
     pub is_reverse: bool,
+    /// Liftover code for alt-aware mapping
+    pub lift_code: LiftCode,
+    /// Liftover group ID (if applicable)
+    pub liftover_group_id: Option<u32>,
 }
 
 /// CIGAR operations for alignment representation
@@ -62,6 +67,7 @@ pub struct Aligner {
     stats: AlignmentStats,
     start_time: Option<Instant>,
     smith_waterman: SmithWatermanAligner,
+    liftover_manager: Option<LiftoverManager>,
 }
 
 impl Aligner {
@@ -103,6 +109,14 @@ impl Aligner {
               smith_waterman.match_score, smith_waterman.mismatch_penalty,
               smith_waterman.gap_open_penalty, smith_waterman.gap_extend_penalty);
 
+        // Try to load liftover configuration if available
+        let liftover_manager = Self::load_liftover_manager(hash_table_dir)?;
+        if let Some(ref lm) = liftover_manager {
+            info!("Loaded liftover manager with {} groups", lm.get_all_groups().len());
+        } else {
+            info!("No liftover configuration found - alt-aware mapping disabled");
+        }
+
         Ok(Self {
             config,
             hash_table,
@@ -110,7 +124,48 @@ impl Aligner {
             stats: AlignmentStats::new(),
             start_time: None,
             smith_waterman,
+            liftover_manager,
         })
+    }
+
+    /// Load liftover manager from hash table directory
+    fn load_liftover_manager(hash_table_dir: &Path) -> Result<Option<LiftoverManager>> {
+        let liftover_file = hash_table_dir.join("liftover.sam");
+        
+        if liftover_file.exists() {
+            info!("Loading liftover configuration from: {}", liftover_file.display());
+            match LiftoverManager::load_from_sam(&liftover_file) {
+                Ok(manager) => Ok(Some(manager)),
+                Err(e) => {
+                    warn!("Failed to load liftover configuration: {}", e);
+                    Ok(None)
+                }
+            }
+        } else {
+            debug!("No liftover file found at: {}", liftover_file.display());
+            Ok(None)
+        }
+    }
+
+    /// Get liftover information for a reference position
+    fn get_liftover_info(&self, flat_position: u64) -> (LiftCode, Option<u32>) {
+        if let Some(ref liftover_manager) = self.liftover_manager {
+            let lift_code = liftover_manager.get_lift_code(flat_position);
+            
+            // Get liftover group ID if this position is in an alt contig
+            let group_id = if matches!(lift_code, LiftCode::Alt) {
+                liftover_manager.get_contig_for_position(flat_position)
+                    .and_then(|contig| liftover_manager.get_group_for_contig(&contig.name))
+                    .map(|group| group.group_id)
+            } else {
+                None
+            };
+            
+            (lift_code, group_id)
+        } else {
+            // No liftover manager - assume all positions are primary
+            (LiftCode::None, None)
+        }
     }
 
     /// Start statistics tracking
@@ -165,8 +220,17 @@ impl Aligner {
             return Ok(None);
         }
         
+        // Apply alt-aware filtering to prioritize primary contigs
+        let filtered_hits = self.filter_alt_aware_hits(all_hits);
+        debug!("After alt-aware filtering: {} hits remaining", filtered_hits.len());
+        
+        if filtered_hits.is_empty() {
+            debug!("No hits remaining after alt-aware filtering for read {}", read.id);
+            return Ok(None);
+        }
+        
         // Cluster hits by reference position
-        let clustered_hits = self.cluster_hits(all_hits);
+        let clustered_hits = self.cluster_hits(filtered_hits);
         debug!("Clustered into {} potential alignment positions", clustered_hits.len());
         
         // Evaluate all alignment candidates for proper MAPQ calculation
@@ -303,11 +367,16 @@ impl Aligner {
             let sequence_id = encoded_pos >> 32;
             let reference_position = (encoded_pos & 0xFFFFFFFF) as u32;
             
+            // Get liftover information for this position
+            let (lift_code, liftover_group_id) = self.get_liftover_info(reference_position as u64);
+            
             hits.push(SeedHit {
                 read_position,
                 reference_position,
                 sequence_id,
                 is_reverse,
+                lift_code,
+                liftover_group_id,
             });
         }
         
@@ -342,11 +411,16 @@ impl Aligner {
                             read_position
                         };
                         
+                        // Get liftover information for this position
+                        let (lift_code, liftover_group_id) = self.get_liftover_info(reference_position as u64);
+                        
                         hits.push(SeedHit {
                             read_position: adjusted_read_position,
                             reference_position,
                             sequence_id,
                             is_reverse,
+                            lift_code,
+                            liftover_group_id,
                         });
                     }
                     
@@ -415,6 +489,56 @@ impl Aligner {
         }
         
         extension
+    }
+    
+    /// Filter seed hits based on alt-aware mapping strategy
+    /// Following DRAGMAP's approach: exclude ALT and DIF_PRI records during random sampling
+    fn filter_alt_aware_hits(&self, hits: Vec<SeedHit>) -> Vec<SeedHit> {
+        if self.liftover_manager.is_none() {
+            return hits;
+        }
+        
+        let mut filtered_hits = Vec::new();
+        let mut alt_hits = Vec::new();
+        
+        // Separate primary and alt hits
+        for hit in hits {
+            match hit.lift_code {
+                LiftCode::Alt | LiftCode::DifPri => {
+                    alt_hits.push(hit);
+                }
+                LiftCode::None | LiftCode::Pri => {
+                    filtered_hits.push(hit);
+                }
+            }
+        }
+        
+        debug!("Alt-aware filtering: {} primary hits, {} alt hits", 
+               filtered_hits.len(), alt_hits.len());
+        
+        // If no primary hits available, consider alt hits as backup
+        if filtered_hits.is_empty() && !alt_hits.is_empty() {
+            debug!("No primary hits found, considering alt hits");
+            filtered_hits.extend(alt_hits);
+        }
+        
+        filtered_hits
+    }
+
+    /// Group hits by liftover group for alt-aware processing
+    fn group_hits_by_liftover(&self, hits: Vec<SeedHit>) -> Vec<Vec<SeedHit>> {
+        if self.liftover_manager.is_none() {
+            return vec![hits];
+        }
+        
+        let mut groups: std::collections::HashMap<Option<u32>, Vec<SeedHit>> = std::collections::HashMap::new();
+        
+        for hit in hits {
+            let group_key = hit.liftover_group_id;
+            groups.entry(group_key).or_insert_with(Vec::new).push(hit);
+        }
+        
+        groups.into_values().collect()
     }
     
     /// Cluster hits that are close together on the reference
@@ -1217,6 +1341,8 @@ reference_len0          = 1000
             reference_position: 105,
             sequence_id: 0,
             is_reverse: false,
+            lift_code: LiftCode::None,
+            liftover_group_id: None,
         };
         
         // Test alignment extension
@@ -1254,10 +1380,10 @@ reference_len0          = 1000
         
         // Create test hits
         let hits = vec![
-            SeedHit { read_position: 0, reference_position: 100, sequence_id: 0, is_reverse: false },
-            SeedHit { read_position: 1, reference_position: 101, sequence_id: 0, is_reverse: false },
-            SeedHit { read_position: 2, reference_position: 102, sequence_id: 0, is_reverse: false },
-            SeedHit { read_position: 0, reference_position: 2000, sequence_id: 0, is_reverse: false }, // Distant hit
+            SeedHit { read_position: 0, reference_position: 100, sequence_id: 0, is_reverse: false, lift_code: LiftCode::None, liftover_group_id: None },
+            SeedHit { read_position: 1, reference_position: 101, sequence_id: 0, is_reverse: false, lift_code: LiftCode::None, liftover_group_id: None },
+            SeedHit { read_position: 2, reference_position: 102, sequence_id: 0, is_reverse: false, lift_code: LiftCode::None, liftover_group_id: None },
+            SeedHit { read_position: 0, reference_position: 2000, sequence_id: 0, is_reverse: false, lift_code: LiftCode::None, liftover_group_id: None }, // Distant hit
         ];
         
         let clusters = aligner.cluster_hits(hits);
