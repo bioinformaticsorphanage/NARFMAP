@@ -3,7 +3,7 @@ use std::process;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use log::{debug, info, error};
+use log::{debug, info, error, warn};
 
 mod reference;
 mod align;
@@ -175,8 +175,11 @@ fn run_align(args: &Commands, _output_dir: &Option<PathBuf>, _output_prefix: &st
         align_config.num_threads = *threads;
         
         // Initialize the aligner
-        let aligner = align::Aligner::new(align_config, reference_dir)
+        let mut aligner = align::Aligner::new(align_config, reference_dir)
             .with_context(|| format!("Failed to initialize aligner with reference directory: {}", reference_dir.display()))?;
+        
+        // Start statistics tracking
+        aligner.start_stats();
         
         // For now, output SAM to stdout (like most aligners)
         // TODO: Add proper output file options to CLI
@@ -281,7 +284,23 @@ fn run_align(args: &Commands, _output_dir: &Option<PathBuf>, _output_prefix: &st
         }
         
         sam_writer.flush()?;
+        
+        // Finalize and report statistics
+        aligner.finalize_stats();
+        let stats = aligner.get_stats();
+        
         info!("Alignment complete. Output written to stdout");
+        eprintln!("\n{}", stats.generate_report());
+        
+        // Optionally save detailed statistics to a file
+        if let Ok(json_stats) = stats.to_json() {
+            if let Err(e) = std::fs::write("narfmap_stats.json", json_stats) {
+                warn!("Failed to write statistics file: {}", e);
+            } else {
+                info!("Detailed statistics written to narfmap_stats.json");
+            }
+        }
+        
         Ok(())
     } else {
         unreachable!("Command dispatch error");
