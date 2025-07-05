@@ -1,0 +1,41 @@
+{
+  "total_reads": 1,
+  "aligned_reads": 1,
+  "unaligned_reads": 0,
+  "multiply_aligned_reads": 0,
+  "total_bases": 101,
+  "aligned_bases": 101,
+  "mismatched_bases": 10,
+  "inserted_bases": 0,
+  "deleted_bases": 0,
+  "soft_clipped_bases": 0,
+  "hard_clipped_bases": 0,
+  "mapq_distribution": {
+    "60": 1
+  },
+  "insert_size_sum": 0,
+  "insert_size_count": 0,
+  "insert_size_histogram": {},
+  "alignment_time": {
+    "secs": 0,
+    "nanos": 2952209
+  },
+  "reads_per_second": 338.7294056755467,
+  "bases_per_second": 34211.669973230215,
+  "reference_coverage": {
+    "gi|9626372|ref|NC_001422.1| Enterobacteria phage phiX174 sensu lato, complete genome": {
+      "sequence_name": "gi|9626372|ref|NC_001422.1| Enterobacteria phage phiX174 sensu lato, complete genome",
+      "sequence_length": 0,
+      "covered_bases": 1,
+      "total_coverage": 1,
+      "mean_coverage": 0.0,
+      "coverage_histogram": {
+        "1": 1
+      }
+    }
+  },
+  "substitution_rate": 0.09900990099009901,
+  "insertion_rate": 0.0,
+  "deletion_rate": 0.0,
+  "overall_error_rate": 0.09900990099009901
+}
