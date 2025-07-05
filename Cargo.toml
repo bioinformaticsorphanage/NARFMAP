@@ -10,6 +10,10 @@ license = "GPL-3.0"
 [dependencies]
 # Command line interface
 clap = { version = "4.4.11", features = ["derive"] }
+colored = "2.0"         # Colored terminal output
+indicatif = "0.17"      # Progress bars and spinners
+atty = "0.2"            # Terminal detection
+num_cpus = "1.16"       # CPU count detection
 
 # Logging and error handling
 log = "0.4"
