@@ -10,10 +10,12 @@ use crate::reference::{LiftoverManager, LiftCode};
 
 pub use stats::AlignmentStats;
 pub use smith_waterman::{SmithWatermanAligner, CigarOp as SwCigarOp};
+pub use paired::{PairedEndAligner, PairedEndConfig, PairedAlignment, InsertSizeStats};
 
 pub mod sam;
 pub mod stats;
 pub mod smith_waterman;
+pub mod paired;
 
 /// Alignment result for a single read
 #[derive(Debug, Clone)]
@@ -68,6 +70,7 @@ pub struct Aligner {
     start_time: Option<Instant>,
     smith_waterman: SmithWatermanAligner,
     liftover_manager: Option<LiftoverManager>,
+    paired_end_aligner: Option<PairedEndAligner>,
 }
 
 impl Aligner {
@@ -117,6 +120,10 @@ impl Aligner {
             info!("No liftover configuration found - alt-aware mapping disabled");
         }
 
+        // Create paired-end aligner with default configuration
+        let paired_end_config = PairedEndConfig::default();
+        let paired_end_aligner = Some(PairedEndAligner::new(paired_end_config));
+
         Ok(Self {
             config,
             hash_table,
@@ -125,6 +132,7 @@ impl Aligner {
             start_time: None,
             smith_waterman,
             liftover_manager,
+            paired_end_aligner,
         })
     }
 
@@ -189,6 +197,48 @@ impl Aligner {
         if let Some(start_time) = self.start_time {
             let elapsed = start_time.elapsed();
             self.stats.finalize(elapsed);
+        }
+    }
+    
+    /// Align a pair of reads with mate rescue scanning
+    pub fn align_paired_reads(&mut self, read1: &Sequence, read2: &Sequence) -> Result<(Option<AlignmentResult>, Option<AlignmentResult>)> {
+        // Check if paired-end aligner is available
+        let has_pe_aligner = self.paired_end_aligner.is_some();
+        
+        if has_pe_aligner {
+            // Take ownership of the paired-end aligner temporarily
+            let mut pe_aligner = self.paired_end_aligner.take().unwrap();
+            let paired_result = pe_aligner.align_pair(self, read1, read2)?;
+            
+            // Put the paired-end aligner back
+            self.paired_end_aligner = Some(pe_aligner);
+            
+            // Record paired-end statistics
+            if let (Some(ref a1), Some(ref a2)) = (&paired_result.read1, &paired_result.read2) {
+                self.stats.record_read(read1.len(), true);
+                self.stats.record_read(read2.len(), true);
+                self.stats.record_mapq(a1.mapq);
+                self.stats.record_mapq(a2.mapq);
+                
+                if let Some(insert_size) = paired_result.insert_size {
+                    self.stats.record_insert_size(insert_size);
+                }
+            } else {
+                // Record failed alignments
+                if paired_result.read1.is_none() {
+                    self.stats.record_read(read1.len(), false);
+                }
+                if paired_result.read2.is_none() {
+                    self.stats.record_read(read2.len(), false);
+                }
+            }
+            
+            Ok((paired_result.read1, paired_result.read2))
+        } else {
+            // Fallback to independent alignments if no paired-end aligner
+            let alignment1 = self.align_read(read1)?;
+            let alignment2 = self.align_read(read2)?;
+            Ok((alignment1, alignment2))
         }
     }
     
@@ -283,7 +333,7 @@ impl Aligner {
     }
     
     /// Extract k-mer seeds from a read (both forward and reverse complement)
-    fn extract_seeds(&self, read: &Sequence) -> Result<Vec<(usize, Vec<u8>, bool)>> {
+    pub fn extract_seeds(&self, read: &Sequence) -> Result<Vec<(usize, Vec<u8>, bool)>> {
         let mut seeds = Vec::new();
         let k = self.config.seed_len;
         
@@ -349,7 +399,7 @@ impl Aligner {
     }
     
     /// Find hits for a k-mer seed in the hash table with dynamic extension
-    fn find_seed_hits(&self, seed: &[u8], read_position: usize, is_reverse: bool) -> Result<Vec<SeedHit>> {
+    pub fn find_seed_hits(&self, seed: &[u8], read_position: usize, is_reverse: bool) -> Result<Vec<SeedHit>> {
         let initial_positions = self.hash_table.query_kmer(seed)?;
         
         // Check if we need extension based on hit frequency
@@ -542,7 +592,7 @@ impl Aligner {
     }
     
     /// Cluster hits that are close together on the reference
-    fn cluster_hits(&self, hits: Vec<SeedHit>) -> Vec<Vec<SeedHit>> {
+    pub fn cluster_hits(&self, hits: Vec<SeedHit>) -> Vec<Vec<SeedHit>> {
         let mut clusters: Vec<Vec<SeedHit>> = Vec::new();
         let cluster_distance = self.config.cluster_distance;
         
@@ -590,7 +640,7 @@ impl Aligner {
     }
     
     /// Evaluate multiple alignment candidates and return scored results
-    fn evaluate_alignment_candidates(&self, read: &Sequence, clusters: Vec<Vec<SeedHit>>) -> Result<Vec<(SeedHit, i32)>> {
+    pub fn evaluate_alignment_candidates(&self, read: &Sequence, clusters: Vec<Vec<SeedHit>>) -> Result<Vec<(SeedHit, i32)>> {
         let mut scored_alignments = Vec::new();
         
         // Evaluate up to 5 best clusters for MAPQ calculation
@@ -620,7 +670,7 @@ impl Aligner {
     }
     
     /// Extend alignment from a seed hit using Smith-Waterman alignment
-    fn extend_alignment(&self, read: &Sequence, seed_hit: &SeedHit) -> Result<Option<AlignmentResult>> {
+    pub fn extend_alignment(&self, read: &Sequence, seed_hit: &SeedHit) -> Result<Option<AlignmentResult>> {
         let reference_name = self.get_reference_name(seed_hit.sequence_id);
         
         // Calculate the expected start position on reference
@@ -1201,21 +1251,6 @@ impl Aligner {
         result
     }
     
-    /// Align paired-end reads
-    pub fn align_paired_reads(&mut self, read1: &Sequence, read2: &Sequence) -> Result<(Option<AlignmentResult>, Option<AlignmentResult>)> {
-        debug!("Aligning paired reads: {} and {}", read1.id, read2.id);
-        
-        // For now, align each read independently
-        let alignment1 = self.align_read(read1)?;
-        let alignment2 = self.align_read(read2)?;
-        
-        // TODO: Implement proper paired-end alignment logic
-        // - Ensure reads are properly paired
-        // - Calculate insert size
-        // - Set proper SAM flags
-        
-        Ok((alignment1, alignment2))
-    }
 }
 
 #[cfg(test)]
