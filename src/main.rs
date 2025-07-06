@@ -145,7 +145,7 @@ fn run_index(reference: &PathBuf, output: Option<&Path>, kmer_size: usize,
     hash_config.num_threads = threads;
     
     // Build the hash table
-    let builder = hashtable::HashTableBuilder::new(hash_config)
+    let mut builder = hashtable::HashTableBuilder::new(hash_config)
         .with_context(|| "Failed to create hash table builder")?;
     
     if let Some(pb) = &progress_bar {

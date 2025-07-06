@@ -102,6 +102,48 @@ impl HashRecord {
         Self(record)
     }
 
+    /// Create a CHAIN_BEG_MASK record
+    pub fn chain_beg_mask(filter_mask: u32, chain_pointer: u32) -> Self {
+        let mut record = 0u64;
+        record |= (filter_mask as u64) << 32; // FilterMask[63:32]
+        record |= 0xF4000000u64; // Set bits for CHAIN_BEG_MASK type
+        record |= (chain_pointer as u64) & 0x3FFFF; // ChainPointer[17:0]
+        Self(record)
+    }
+
+    /// Create a CHAIN_BEG_LIST record
+    pub fn chain_beg_list(filter_lists: [u8; 4], chain_pointer: u32) -> Self {
+        let mut record = 0u64;
+        record |= (filter_lists[3] as u64) << 56; // FilterList4[63:56]
+        record |= (filter_lists[2] as u64) << 48; // FilterList3[55:48]
+        record |= (filter_lists[1] as u64) << 40; // FilterList2[47:40]
+        record |= (filter_lists[0] as u64) << 32; // FilterList1[39:32]
+        record |= 0xF5000000u64; // Set bits for CHAIN_BEG_LIST type
+        record |= (chain_pointer as u64) & 0x3FFFF; // ChainPointer[17:0]
+        Self(record)
+    }
+
+    /// Create a CHAIN_CON_MASK record
+    pub fn chain_con_mask(filter_mask: u32, chain_pointer: u32) -> Self {
+        let mut record = 0u64;
+        record |= (filter_mask as u64) << 32; // FilterMask[63:32]
+        record |= 0xF6000000u64; // Set bits for CHAIN_CON_MASK type
+        record |= (chain_pointer as u64) & 0x3FFFF; // ChainPointer[17:0]
+        Self(record)
+    }
+
+    /// Create a CHAIN_CON_LIST record
+    pub fn chain_con_list(filter_lists: [u8; 4], chain_pointer: u32) -> Self {
+        let mut record = 0u64;
+        record |= (filter_lists[3] as u64) << 56; // FilterList4[63:56]
+        record |= (filter_lists[2] as u64) << 48; // FilterList3[55:48]
+        record |= (filter_lists[1] as u64) << 40; // FilterList2[47:40]
+        record |= (filter_lists[0] as u64) << 32; // FilterList1[39:32]
+        record |= 0xF7000000u64; // Set bits for CHAIN_CON_LIST type
+        record |= (chain_pointer as u64) & 0x3FFFF; // ChainPointer[17:0]
+        Self(record)
+    }
+
     /// Get the record type
     pub fn record_type(&self) -> RecordType {
         // Check if bits [31:28] are all set
@@ -180,6 +222,30 @@ impl HashRecord {
             RecordType::ChainBegMask | RecordType::ChainBegList | 
             RecordType::ChainConMask | RecordType::ChainConList => {
                 Some((self.0 & 0x3FFFF) as u32)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get filter mask for CHAIN_BEG_MASK and CHAIN_CON_MASK records
+    pub fn filter_mask(&self) -> Option<u32> {
+        match self.record_type() {
+            RecordType::ChainBegMask | RecordType::ChainConMask => {
+                Some(((self.0 >> 32) & 0xFFFFFFFF) as u32)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get filter lists for CHAIN_BEG_LIST and CHAIN_CON_LIST records
+    pub fn filter_lists(&self) -> Option<[u8; 4]> {
+        match self.record_type() {
+            RecordType::ChainBegList | RecordType::ChainConList => {
+                let list1 = ((self.0 >> 32) & 0xFF) as u8;
+                let list2 = ((self.0 >> 40) & 0xFF) as u8;
+                let list3 = ((self.0 >> 48) & 0xFF) as u8;
+                let list4 = ((self.0 >> 56) & 0xFF) as u8;
+                Some([list1, list2, list3, list4])
             }
             _ => None,
         }
