@@ -142,7 +142,7 @@ pub enum Commands {
         preview: usize,
 
         /// Show quality score distribution (FASTQ only)
-        #[arg(short, long)]
+        #[arg(long)]
         quality: bool,
 
         /// Output format for stats
@@ -187,7 +187,7 @@ pub enum Commands {
         detailed: bool,
 
         /// Verify index integrity
-        #[arg(short, long)]
+        #[arg(long)]
         verify: bool,
     },
 }
