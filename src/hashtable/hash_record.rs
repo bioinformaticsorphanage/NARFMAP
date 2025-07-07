@@ -144,6 +144,97 @@ impl HashRecord {
         Self(record)
     }
 
+    /// Create an INTERVAL_SL record (Start + Length compact form)
+    pub fn interval_sl(thread_id: u8, hash_bits: u32, is_extended: bool, is_last: bool, 
+                       msb: bool, start: u32, length: u32) -> Self {
+        let mut record = 0u64;
+        record |= (thread_id as u64 & 0x3F) << Self::THREAD_ID_START;
+        record |= (hash_bits as u64 & 0x7FFFFF) << Self::HASH_BITS_START;
+        if is_extended {
+            record |= 1u64 << Self::EX_FLAG;
+        }
+        if is_last {
+            record |= 1u64 << Self::LF_FLAG;
+        }
+        if msb {
+            record |= 1u64 << Self::RC_FLAG; // MSB flag reuses RC bit position
+        }
+        record |= 0xF8000000u64; // Set bits for INTERVAL_SL type
+        
+        if msb {
+            // SL1 format: 8-bit start (upper), 16-bit length
+            record |= ((start & 0xFF) << 8) as u64;
+            record |= (length & 0xFFFF) as u64;
+        } else {
+            // SL0 format: 15-bit start, 9-bit length  
+            record |= ((start & 0x7FFF) << 9) as u64;
+            record |= (length & 0x1FF) as u64;
+        }
+        Self(record)
+    }
+
+    /// Create an INTERVAL_SLE record (Start + Length + Extra liftovers)
+    pub fn interval_sle(thread_id: u8, hash_bits: u32, is_extended: bool, is_last: bool,
+                        msb: bool, exlifts: u8, start: u8, length: u8) -> Self {
+        let mut record = 0u64;
+        record |= (thread_id as u64 & 0x3F) << Self::THREAD_ID_START;
+        record |= (hash_bits as u64 & 0x7FFFFF) << Self::HASH_BITS_START;
+        if is_extended {
+            record |= 1u64 << Self::EX_FLAG;
+        }
+        if is_last {
+            record |= 1u64 << Self::LF_FLAG;
+        }
+        if msb {
+            record |= 1u64 << Self::RC_FLAG; // MSB flag reuses RC bit position
+        }
+        record |= 0xF9000000u64; // Set bits for INTERVAL_SLE type
+        record |= ((exlifts as u64 & 0xFF) << 16); // Exlifts[23:16]
+        record |= ((length as u64 & 0xFF) << 8);   // Length[15:8]
+        record |= (start as u64 & 0xFF);           // Start[7:0]
+        Self(record)
+    }
+
+    /// Create an INTERVAL_S record (Start position only)
+    pub fn interval_s(thread_id: u8, hash_bits: u32, is_extended: bool, is_last: bool,
+                      msb: bool, start: u32) -> Self {
+        let mut record = 0u64;
+        record |= (thread_id as u64 & 0x3F) << Self::THREAD_ID_START;
+        record |= (hash_bits as u64 & 0x7FFFFF) << Self::HASH_BITS_START;
+        if is_extended {
+            record |= 1u64 << Self::EX_FLAG;
+        }
+        if is_last {
+            record |= 1u64 << Self::LF_FLAG;
+        }
+        if msb {
+            record |= 1u64 << Self::RC_FLAG; // MSB flag reuses RC bit position
+        }
+        record |= 0xFA000000u64; // Set bits for INTERVAL_S type
+        record |= (start as u64) & 0xFFFFFF; // Start[23:0]
+        Self(record)
+    }
+
+    /// Create an INTERVAL_L record (Length only)
+    pub fn interval_l(thread_id: u8, hash_bits: u32, is_extended: bool, is_last: bool,
+                      msb: bool, length: u32) -> Self {
+        let mut record = 0u64;
+        record |= (thread_id as u64 & 0x3F) << Self::THREAD_ID_START;
+        record |= (hash_bits as u64 & 0x7FFFFF) << Self::HASH_BITS_START;
+        if is_extended {
+            record |= 1u64 << Self::EX_FLAG;
+        }
+        if is_last {
+            record |= 1u64 << Self::LF_FLAG;
+        }
+        if msb {
+            record |= 1u64 << Self::RC_FLAG; // MSB flag reuses RC bit position
+        }
+        record |= 0xFB000000u64; // Set bits for INTERVAL_L type
+        record |= (length as u64) & 0xFFFFFF; // Length[23:0]
+        Self(record)
+    }
+
     /// Get the record type
     pub fn record_type(&self) -> RecordType {
         // Check if bits [31:28] are all set
@@ -246,6 +337,99 @@ impl HashRecord {
                 let list3 = ((self.0 >> 48) & 0xFF) as u8;
                 let list4 = ((self.0 >> 56) & 0xFF) as u8;
                 Some([list1, list2, list3, list4])
+            }
+            _ => None,
+        }
+    }
+
+    /// Get MSB flag (stored in RC bit position for INTERVAL records)
+    pub fn interval_msb(&self) -> bool {
+        match self.record_type() {
+            RecordType::IntervalSL | RecordType::IntervalSLE | 
+            RecordType::IntervalS | RecordType::IntervalL => {
+                (self.0 >> Self::RC_FLAG) & 1 == 1
+            }
+            _ => false,
+        }
+    }
+
+    /// Get start value for INTERVAL_SL records
+    pub fn interval_sl_start(&self) -> Option<u32> {
+        match self.record_type() {
+            RecordType::IntervalSL => {
+                if self.interval_msb() {
+                    // SL1 format: 8-bit start (upper)
+                    Some(((self.0 >> 8) & 0xFF) as u32)
+                } else {
+                    // SL0 format: 15-bit start
+                    Some(((self.0 >> 9) & 0x7FFF) as u32)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get length value for INTERVAL_SL records
+    pub fn interval_sl_length(&self) -> Option<u32> {
+        match self.record_type() {
+            RecordType::IntervalSL => {
+                if self.interval_msb() {
+                    // SL1 format: 16-bit length
+                    Some((self.0 & 0xFFFF) as u32)
+                } else {
+                    // SL0 format: 9-bit length
+                    Some((self.0 & 0x1FF) as u32)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get exlifts value for INTERVAL_SLE records
+    pub fn interval_sle_exlifts(&self) -> Option<u8> {
+        match self.record_type() {
+            RecordType::IntervalSLE => {
+                Some(((self.0 >> 16) & 0xFF) as u8)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get start value for INTERVAL_SLE records
+    pub fn interval_sle_start(&self) -> Option<u8> {
+        match self.record_type() {
+            RecordType::IntervalSLE => {
+                Some((self.0 & 0xFF) as u8)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get length value for INTERVAL_SLE records
+    pub fn interval_sle_length(&self) -> Option<u8> {
+        match self.record_type() {
+            RecordType::IntervalSLE => {
+                Some(((self.0 >> 8) & 0xFF) as u8)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get start value for INTERVAL_S records
+    pub fn interval_s_start(&self) -> Option<u32> {
+        match self.record_type() {
+            RecordType::IntervalS => {
+                Some((self.0 & 0xFFFFFF) as u32)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get length value for INTERVAL_L records
+    pub fn interval_l_length(&self) -> Option<u32> {
+        match self.record_type() {
+            RecordType::IntervalL => {
+                Some((self.0 & 0xFFFFFF) as u32)
             }
             _ => None,
         }

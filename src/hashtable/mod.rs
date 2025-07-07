@@ -8,22 +8,26 @@ use rayon::prelude::*;
 
 use crate::config::HashTableConfig;
 use crate::reference::hashtable::{Hashtable as RefHashtable, HashtableConfig as RefHashtableConfig, HashTableType, HashtableData};
+use crate::reference::liftover::LiftCode;
 
 mod crc_hash;
 mod hash_record;
 mod bucket;
 mod reference_metadata;
+mod extend_table;
 
 pub use crc_hash::{CrcPolynomial, CrcHasher, KmerHasher};
 pub use hash_record::{HashRecord, RecordType};
 pub use bucket::{Bucket, HashtableTraits};
 pub use reference_metadata::{ReferenceMetadata, SequenceInfo};
+pub use extend_table::{ExtendTable, ExtendTableRecord, ExtendTableConfig};
 
 /// Hash table builder for generating hash tables from reference genomes
 pub struct HashTableBuilder {
     config: HashTableConfig,
     kmer_hasher: KmerHasher,
     collision_stats: CollisionStats,
+    extend_table: ExtendTable,
 }
 
 /// Statistics for hash table collision resolution
@@ -44,10 +48,22 @@ impl HashTableBuilder {
     /// Create a new hash table builder with the given configuration
     pub fn new(config: HashTableConfig) -> Result<Self> {
         let kmer_hasher = KmerHasher::with_dragmap_defaults(config.seed_len)?;
+        
+        // Create extend table with configuration
+        let extend_table_config = ExtendTableConfig {
+            enabled: config.extend_table_enabled,
+            min_frequency_to_extend: config.extend_table_min_freq,
+            max_interval_positions: 10000, // TODO: Make configurable
+            memory_limit_mb: 512,           // TODO: Make configurable
+            enable_compression: true,
+        };
+        let extend_table = ExtendTable::new(extend_table_config);
+        
         Ok(Self { 
             config, 
             kmer_hasher, 
             collision_stats: CollisionStats::default(),
+            extend_table,
         })
     }
 
@@ -276,21 +292,40 @@ impl HashTableBuilder {
             
             // Handle high-frequency k-mers
             if positions.len() > self.config.max_seed_freq as usize {
-                // Create HIFREQ record
-                let hifreq_record = HashRecord::hifreq(
-                    thread_id,
-                    hash_bits,
-                    false, // not extended
-                    false, // not last
-                    false, // no random sample
-                    false, // not alt
-                    positions.len() as u32
-                );
-                
-                // Try to insert in bucket with linear probing
-                if !self.insert_record_with_probing(&mut buckets, bucket_idx, hifreq_record) {
-                    collision_count += 1;
-                    warn!("Failed to insert HIFREQ record after linear probing");
+                // Check if we should use extend table for very high-frequency k-mers
+                if self.config.extend_table_enabled && positions.len() >= self.config.extend_table_min_freq as usize {
+                    // Create extend table entries for this k-mer
+                    let interval_id = self.create_extend_table_interval(*kmer_hash, positions)?;
+                    
+                    // Create INTERVAL records to reference the extend table
+                    let interval_records = self.create_interval_records(
+                        thread_id, hash_bits, interval_id, positions.len()
+                    );
+                    
+                    // Insert INTERVAL records into hash table
+                    for record in interval_records {
+                        if !self.insert_record_with_probing(&mut buckets, bucket_idx, record) {
+                            collision_count += 1;
+                            warn!("Failed to insert INTERVAL record after probing");
+                        }
+                    }
+                } else {
+                    // Create traditional HIFREQ record for moderately high-frequency k-mers
+                    let hifreq_record = HashRecord::hifreq(
+                        thread_id,
+                        hash_bits,
+                        false, // not extended
+                        false, // not last
+                        false, // no random sample
+                        false, // not alt
+                        positions.len() as u32
+                    );
+                    
+                    // Try to insert in bucket with probing
+                    if !self.insert_record_with_probing(&mut buckets, bucket_idx, hifreq_record) {
+                        collision_count += 1;
+                        warn!("Failed to insert HIFREQ record after probing");
+                    }
                 }
                 continue;
             }
@@ -476,6 +511,81 @@ impl HashTableBuilder {
         false
     }
 
+    /// Create an extend table interval for high-frequency k-mer positions
+    fn create_extend_table_interval(&mut self, kmer_hash: u64, positions: &[u64]) -> Result<u64> {
+        // Convert positions to extend table records
+        let mut extend_records = Vec::new();
+        
+        for &encoded_pos in positions {
+            let seq_idx = (encoded_pos >> 32) as u32;
+            let position = (encoded_pos & 0xFFFFFFFF) as u32;
+            
+            // For now, use default liftover values
+            // TODO: Extract actual liftover information from sequence context
+            let lift_code = LiftCode::None;
+            let lift_group = seq_idx; // Use sequence index as lift group
+            let is_reverse_complement = false; // TODO: Detect RC from context
+            
+            let record = ExtendTableRecord::new(position, is_reverse_complement, lift_code, lift_group);
+            extend_records.push(record);
+        }
+        
+        // Use kmer_hash as interval ID
+        let interval_id = kmer_hash;
+        
+        // Add to extend table
+        self.extend_table.add_interval(interval_id, extend_records)?;
+        
+        debug!("Created extend table interval {} with {} positions", interval_id, positions.len());
+        Ok(interval_id)
+    }
+
+    /// Create INTERVAL records to reference an extend table interval
+    fn create_interval_records(&self, thread_id: u8, hash_bits: u32, interval_id: u64, position_count: usize) -> Vec<HashRecord> {
+        let mut records = Vec::new();
+        
+        // For simplicity, create a single INTERVAL_SL record
+        // In a full implementation, we'd choose the optimal combination based on data
+        
+        // Use interval_id lower 32 bits as start, position_count as length
+        let start = (interval_id & 0xFFFFFFFF) as u32;
+        let length = position_count.min(0x1FF) as u32; // Limit to 9-bit length for SL0 format
+        
+        // Determine if we need MSB format
+        let needs_msb = start > 0x7FFF || length > 0x1FF;
+        
+        let record = if needs_msb {
+            // Use SL1 format: 8-bit start (upper), 16-bit length
+            let start_upper = (start >> 8) & 0xFF;
+            let length_16bit = length.min(0xFFFF);
+            HashRecord::interval_sl(
+                thread_id,
+                hash_bits,
+                false,        // not extended
+                true,         // mark as last for single record
+                true,         // MSB format
+                start_upper,
+                length_16bit
+            )
+        } else {
+            // Use SL0 format: 15-bit start, 9-bit length
+            HashRecord::interval_sl(
+                thread_id,
+                hash_bits,
+                false,        // not extended
+                true,         // mark as last for single record
+                false,        // SL0 format
+                start & 0x7FFF,
+                length & 0x1FF
+            )
+        };
+        
+        records.push(record);
+        
+        debug!("Created {} INTERVAL records for interval {}", records.len(), interval_id);
+        records
+    }
+
     /// Serialize hash table to disk
     fn serialize_hash_table(
         &mut self,
@@ -487,6 +597,13 @@ impl HashTableBuilder {
         // Build bucket-based hash table
         let buckets = self.build_bucket_table(entries)?;
         
+        // Save extend table if it has data
+        if self.extend_table.get_stats().total_intervals > 0 {
+            let extend_table_path = output_dir.join("extend_table.bin");
+            self.extend_table.save(&extend_table_path)?;
+            info!("Saved extend table with {} intervals", self.extend_table.get_stats().total_intervals);
+        }
+
         // Create binary file for hash table
         let hash_table_path = output_dir.join("hash_table.bin");
         let mut file = std::fs::File::create(&hash_table_path)?;
@@ -556,6 +673,7 @@ pub struct HashTableQuery {
     buckets: Vec<Bucket>,
     num_buckets: usize,
     pub reference_metadata: Option<ReferenceMetadata>,
+    extend_table: Option<std::cell::RefCell<ExtendTable>>,
 }
 
 impl HashTableQuery {
@@ -570,6 +688,7 @@ impl HashTableQuery {
             buckets, 
             num_buckets,
             reference_metadata: None,
+            extend_table: None,
         })
     }
 
@@ -612,12 +731,32 @@ impl HashTableQuery {
             None
         };
         
+        // Load extend table if available and enabled
+        let extend_table_path = dir_path.join("extend_table.bin");
+        let extend_table = if config.extend_table_enabled && extend_table_path.exists() {
+            match ExtendTable::load(&extend_table_path) {
+                Ok(extend_table) => {
+                    info!("Loaded extend table: {} intervals, {} positions", 
+                          extend_table.get_stats().total_intervals,
+                          extend_table.get_stats().total_positions);
+                    Some(extend_table)
+                }
+                Err(e) => {
+                    warn!("Failed to load extend table: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
         // Create hash table with loaded data
         let data = HashtableData::InMemory(Vec::new()); // We use buckets instead
         let hashtable = RefHashtable::new(ref_config, data, None);
 
         let mut query = Self::new(hashtable, config, buckets)?;
         query.reference_metadata = reference_metadata;
+        query.extend_table = extend_table.map(std::cell::RefCell::new);
         Ok(query)
     }
 
@@ -773,8 +912,25 @@ impl HashTableQuery {
                         if record.hash_bits() == target_hash_bits {
                             if let Some(freq) = record.frequency() {
                                 debug!("    ✓ High-frequency hash match! Frequency: {}", freq);
-                                // TODO: Handle high-frequency k-mer lookups in extend table
-                                // For now, we skip high-frequency k-mers
+                                // High-frequency k-mers without extend table are typically skipped
+                                // to avoid overwhelming the aligner with too many candidates
+                            }
+                        }
+                    }
+                    crate::hashtable::hash_record::RecordType::IntervalSL |
+                    crate::hashtable::hash_record::RecordType::IntervalSLE |
+                    crate::hashtable::hash_record::RecordType::IntervalS |
+                    crate::hashtable::hash_record::RecordType::IntervalL => {
+                        // Check for hash match in INTERVAL record
+                        if record.hash_bits() == target_hash_bits {
+                            debug!("    ✓ INTERVAL hash match! Type: {:?}", record.record_type());
+                            
+                            // Query extend table for this interval
+                            if let Some(extend_positions) = self.query_extend_table_for_record(record) {
+                                debug!("    → Found {} positions in extend table", extend_positions.len());
+                                positions.extend(extend_positions);
+                            } else {
+                                debug!("    → No extend table data found for interval");
                             }
                         }
                     }
@@ -820,6 +976,30 @@ impl HashTableQuery {
         
         let buckets_per_block_log2 = block_size_log2.max(3); // Minimum 8 buckets per block
         1 << buckets_per_block_log2
+    }
+
+    /// Query extend table for positions referenced by an INTERVAL record
+    fn query_extend_table_for_record(&self, record: &HashRecord) -> Option<Vec<u64>> {
+        // Extract interval ID from the record
+        // For our simplified implementation, we reconstruct the interval ID from hash bits
+        let interval_id = (record.hash_bits() as u64) << 32;
+        
+        // Query extend table if available
+        if let Some(ref extend_table_cell) = self.extend_table {
+            let mut extend_table = extend_table_cell.borrow_mut();
+            
+            if let Some(extend_records) = extend_table.query_interval(interval_id) {
+                let positions: Vec<u64> = extend_records.iter()
+                    .map(|record| record.position() as u64)
+                    .collect();
+                    
+                debug!("Retrieved {} positions from extend table for interval {}", 
+                       positions.len(), interval_id);
+                return Some(positions);
+            }
+        }
+        
+        None
     }
 
     /// Get hash table statistics

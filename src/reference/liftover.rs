@@ -87,6 +87,18 @@ pub enum LiftCode {
     DifPri = 3,
 }
 
+impl From<u8> for LiftCode {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => LiftCode::None,
+            1 => LiftCode::Alt,
+            2 => LiftCode::Pri,
+            3 => LiftCode::DifPri,
+            _ => LiftCode::None, // Default to None for invalid values
+        }
+    }
+}
+
 /// Main liftover manager for alt-aware mapping
 #[derive(Debug)]
 pub struct LiftoverManager {

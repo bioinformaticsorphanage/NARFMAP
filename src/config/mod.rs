@@ -27,6 +27,10 @@ pub struct HashTableConfig {
     pub crc_primary: u32,
     /// CRC polynomial index for hashing extended seeds (default: 0)
     pub crc_extended: u32,
+    /// Minimum frequency threshold for extend table usage (default: 256)
+    pub extend_table_min_freq: u32,
+    /// Enable extend table support for high-frequency k-mers (default: true)
+    pub extend_table_enabled: bool,
 }
 
 impl Default for HashTableConfig {
@@ -43,6 +47,8 @@ impl Default for HashTableConfig {
             mem_limit_gb: 32,
             crc_primary: 20, // 20 bits for reasonable hash table size
             crc_extended: 54, // 54 bits for extended hashing
+            extend_table_min_freq: 256, // Use extend table for k-mers with freq >= 256
+            extend_table_enabled: true,
         }
     }
 }
