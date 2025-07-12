@@ -166,11 +166,13 @@ The `src/include/` and `src/lib/` directories contain the original C++ implement
 - Target performance parity with C++ implementation
 
 ### DRAGMAP Compatibility Status
-NARFMAP now implements approximately **85-90% of DRAGMAP's core features**:
+NARFMAP now implements approximately **90-92% of DRAGMAP's core features**:
 
 **✅ Implemented (Core Features)**
 - k-mer hashing with CRC polynomials (100% compatible)
 - Hash table generation with bucket storage
+- Hash table probing and chaining for collision handling (block-constrained)
+- Extend table support for high-frequency k-mers (≥256 occurrences)
 - Smith-Waterman alignment with banded optimization
 - Dynamic seed extension (matches DRAGMAP's MAX_EXTENSION_BASES)
 - Seed clustering and alignment candidate evaluation
@@ -188,10 +190,10 @@ NARFMAP now implements approximately **85-90% of DRAGMAP's core features**:
 
 **❌ Not Yet Implemented**
 - Split alignment discovery for structural variants
-- Hash table extend tables for high-frequency k-mers
 - Wavefront steering optimizations
 - Reference masking for alt contigs
-- Hash table probing and chaining for collision handling
+- Extension chaining logic for seed clusters
+- IUB codes injection for isolated SNVs
 
 ### Key Implementation Insights
 - DRAGMAP uses complex template-based C++ with sophisticated type hierarchies
