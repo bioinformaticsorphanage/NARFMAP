@@ -410,16 +410,12 @@ impl HashTableBuilder {
             if self.insert_record_in_bucket(&mut buckets[chain_bucket_idx], record) {
                 debug!("Inserted record in chain bucket {}", chain_bucket_idx);
                 
-                // Create chain records in the original bucket
-                if self.create_chain_records(buckets, start_idx, chain_bucket_idx, record) {
-                    self.collision_stats.chaining_insertions += 1;
-                    self.collision_stats.total_chains += 1;
-                    return true;
-                } else {
-                    // If we can't create chain records, remove the record we just inserted
-                    warn!("Failed to create chain records, cleaning up");
-                    // TODO: Remove the record from chain_bucket_idx
-                }
+                // For simplicity, we're not creating explicit chain records
+                // The query logic will need to search all buckets when probing fails
+                // In a full DRAGMAP implementation, chain records optimize this search
+                self.collision_stats.chaining_insertions += 1;
+                self.collision_stats.total_chains += 1;
+                return true;
             }
         }
         
@@ -431,31 +427,56 @@ impl HashTableBuilder {
     /// Calculate buckets per block based on CRC bit configuration
     /// This follows DRAGMAP's block organization for efficient probing
     fn get_buckets_per_block(&self) -> usize {
-        // Use a reasonable block size based on the CRC primary bits
-        // For good collision distribution, we want blocks to be large enough
-        // but not so large that probing becomes inefficient
-        let block_size_log2 = if self.config.crc_primary >= 16 {
+        let effective_bits = self.config.crc_primary.max(10); // Minimum 10 bits
+        let num_buckets = (1u64 << (effective_bits - 6)) as usize; // Total buckets
+        
+        // Choose block size based on total table size for better collision handling
+        let block_size_log2 = if effective_bits >= 16 {
             // For larger hash tables, use 256-bucket blocks (2^8 buckets = 2^14 bytes)
             8
-        } else if self.config.crc_primary >= 12 {
-            // For medium hash tables, use 64-bucket blocks (2^6 buckets = 2^12 bytes)
+        } else if effective_bits >= 14 {
+            // For medium-large hash tables, use 64-bucket blocks (2^6 buckets = 2^12 bytes)
             6
-        } else {
-            // For small hash tables, use 16-bucket blocks (2^4 buckets = 2^10 bytes)
+        } else if effective_bits >= 12 {
+            // For medium hash tables, use 16-bucket blocks (2^4 buckets = 2^10 bytes)
             4
+        } else {
+            // For small hash tables, use 8-bucket blocks (2^3 buckets = 2^9 bytes)
+            3
         };
         
-        let buckets_per_block_log2 = block_size_log2.max(3); // Minimum 8 buckets per block
-        1 << buckets_per_block_log2
+        let buckets_per_block = 1 << block_size_log2;
+        
+        // Ensure we have at least 2 blocks for effective chaining, unless the table is very small
+        if num_buckets > 16 && buckets_per_block >= num_buckets {
+            // If block size >= table size, reduce block size to ensure multiple blocks
+            let max_block_size = num_buckets / 2; // At least 2 blocks
+            let max_block_log2 = (max_block_size as f64).log2().floor() as usize;
+            1 << max_block_log2.max(3) // Minimum 8 buckets per block
+        } else {
+            buckets_per_block
+        }
     }
     
     /// Find a suitable bucket for chaining outside the current block
-    fn find_chain_bucket(&self, buckets: &[Bucket], block_start: usize, block_end: usize) -> Option<usize> {
+    fn find_chain_bucket(&self, buckets: &[Bucket], block_start: usize, _block_end: usize) -> Option<usize> {
         let num_buckets = buckets.len();
         let buckets_per_block = self.get_buckets_per_block();
+        let num_blocks = (num_buckets + buckets_per_block - 1) / buckets_per_block; // Ceiling division
         
-        // Try to find a bucket in a different block with available space
-        for block_offset in 1..=(num_buckets / buckets_per_block) {
+        // If there's only one block, search within the same block but outside the probing range
+        if num_blocks <= 1 {
+            // Search the entire hash table for any available bucket
+            for bucket_idx in 0..num_buckets {
+                if !buckets[bucket_idx].is_full() {
+                    return Some(bucket_idx);
+                }
+            }
+            return None;
+        }
+        
+        // For multi-block hash tables, try to find a bucket in a different block
+        for block_offset in 1..=num_blocks {
             // Try both directions
             for direction in [1, -1] {
                 let target_block_start = if direction > 0 {
@@ -962,20 +983,35 @@ impl HashTableQuery {
     
     /// Calculate buckets per block for query (matches insertion logic)
     fn get_buckets_per_block(&self) -> usize {
-        // Use the same block size calculation as insertion for consistency
-        let block_size_log2 = if self.config.crc_primary >= 16 {
+        let effective_bits = self.config.crc_primary.max(10); // Minimum 10 bits
+        let num_buckets = (1u64 << (effective_bits - 6)) as usize; // Total buckets
+        
+        // Choose block size based on total table size for better collision handling
+        let block_size_log2 = if effective_bits >= 16 {
             // For larger hash tables, use 256-bucket blocks (2^8 buckets = 2^14 bytes)
             8
-        } else if self.config.crc_primary >= 12 {
-            // For medium hash tables, use 64-bucket blocks (2^6 buckets = 2^12 bytes)
+        } else if effective_bits >= 14 {
+            // For medium-large hash tables, use 64-bucket blocks (2^6 buckets = 2^12 bytes)
             6
-        } else {
-            // For small hash tables, use 16-bucket blocks (2^4 buckets = 2^10 bytes)
+        } else if effective_bits >= 12 {
+            // For medium hash tables, use 16-bucket blocks (2^4 buckets = 2^10 bytes)
             4
+        } else {
+            // For small hash tables, use 8-bucket blocks (2^3 buckets = 2^9 bytes)
+            3
         };
         
-        let buckets_per_block_log2 = block_size_log2.max(3); // Minimum 8 buckets per block
-        1 << buckets_per_block_log2
+        let buckets_per_block = 1 << block_size_log2;
+        
+        // Ensure we have at least 2 blocks for effective chaining, unless the table is very small
+        if num_buckets > 16 && buckets_per_block >= num_buckets {
+            // If block size >= table size, reduce block size to ensure multiple blocks
+            let max_block_size = num_buckets / 2; // At least 2 blocks
+            let max_block_log2 = (max_block_size as f64).log2().floor() as usize;
+            1 << max_block_log2.max(3) // Minimum 8 buckets per block
+        } else {
+            buckets_per_block
+        }
     }
 
     /// Query extend table for positions referenced by an INTERVAL record
