@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use rayon::prelude::*;
 
 // Use library modules
 use narfmap::alignment::Aligner;
@@ -348,7 +349,7 @@ fn align_reads(
     output_prefix: &str,
     rgid: &str,
     rgsm: &str,
-    _num_threads: usize,
+    num_threads: usize,
     min_insert_size: u64,
     max_insert_size: u64,
     interleaved: bool,
@@ -385,6 +386,12 @@ fn align_reads(
         min_insert_size,
         max_insert_size,
     };
+
+    let thread_count = num_threads.max(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()?;
+    let chunk_size = 10_000usize;
 
     // Load reference and hash table
     println!("Loading reference...");
@@ -423,68 +430,91 @@ fn align_reads(
     if interleaved {
         let mut fastq_reader = FastqReader::open(fastq1)?;
         loop {
-            let read1 = match fastq_reader.read_record()? {
-                Some(read) => read,
-                None => break,
-            };
-            let read2 = fastq_reader.read_record()?.ok_or_else(|| {
-                anyhow::anyhow!("Interleaved FASTQ missing mate for {}", read1.name)
-            })?;
-            process_pair(
-                &aligner,
-                &mut sam_writer,
-                &read1,
-                &read2,
-                &pairing,
-                rgid,
-                &mut total_reads,
-                &mut aligned_reads,
-            )?;
+            let pairs = read_chunk_pairs_interleaved(&mut fastq_reader, chunk_size)?;
+            if pairs.is_empty() {
+                break;
+            }
+
+            let results = pool.install(|| {
+                pairs
+                    .par_iter()
+                    .map(|pair| align_pair(&aligner, pair, &pairing))
+                    .collect::<Vec<_>>()
+            });
+
+            total_reads += (pairs.len() as u64) * 2;
+            for (aln1, aln2) in results {
+                if aln1.flag & 4 == 0 {
+                    aligned_reads += 1;
+                }
+                if aln2.flag & 4 == 0 {
+                    aligned_reads += 1;
+                }
+
+                sam_writer.write_alignment(&aln1, rgid)?;
+                sam_writer.write_alignment(&aln2, rgid)?;
+            }
+
+            if total_reads % 10000 == 0 {
+                eprint!("\r  Processed {total_reads} reads...");
+            }
         }
     } else if let Some(fq2) = fastq2 {
         let mut fastq_reader1 = FastqReader::open(fastq1)?;
         let mut fastq_reader2 = FastqReader::open(fq2)?;
         loop {
-            let read1 = fastq_reader1.read_record()?;
-            let read2 = fastq_reader2.read_record()?;
-            match (read1, read2) {
-                (None, None) => break,
-                (Some(_), None) => {
-                    bail!("FASTQ 2 ended before FASTQ 1")
+            let pairs = read_chunk_pairs(&mut fastq_reader1, &mut fastq_reader2, chunk_size)?;
+            if pairs.is_empty() {
+                break;
+            }
+
+            let results = pool.install(|| {
+                pairs
+                    .par_iter()
+                    .map(|pair| align_pair(&aligner, pair, &pairing))
+                    .collect::<Vec<_>>()
+            });
+
+            total_reads += (pairs.len() as u64) * 2;
+            for (aln1, aln2) in results {
+                if aln1.flag & 4 == 0 {
+                    aligned_reads += 1;
                 }
-                (None, Some(_)) => {
-                    bail!("FASTQ 1 ended before FASTQ 2")
+                if aln2.flag & 4 == 0 {
+                    aligned_reads += 1;
                 }
-                (Some(read1), Some(read2)) => {
-                    process_pair(
-                        &aligner,
-                        &mut sam_writer,
-                        &read1,
-                        &read2,
-                        &pairing,
-                        rgid,
-                        &mut total_reads,
-                        &mut aligned_reads,
-                    )?;
-                }
+
+                sam_writer.write_alignment(&aln1, rgid)?;
+                sam_writer.write_alignment(&aln2, rgid)?;
+            }
+
+            if total_reads % 10000 == 0 {
+                eprint!("\r  Processed {total_reads} reads...");
             }
         }
     } else {
-        let fastq_reader = FastqReader::open(fastq1)?;
-        for read_result in fastq_reader {
-            let read = read_result?;
-            total_reads += 1;
-
-            let alignment = aligner.align(&read);
-
-            if alignment.flag & 4 == 0 {
-                // Mapped
-                aligned_reads += 1;
+        let mut fastq_reader = FastqReader::open(fastq1)?;
+        loop {
+            let reads = read_chunk(&mut fastq_reader, chunk_size)?;
+            if reads.is_empty() {
+                break;
             }
 
-            sam_writer.write_alignment(&alignment, rgid)?;
+            let alignments = pool.install(|| {
+                reads
+                    .par_iter()
+                    .map(|read| aligner.align(read))
+                    .collect::<Vec<_>>()
+            });
 
-            // Progress
+            total_reads += reads.len() as u64;
+            for alignment in alignments {
+                if alignment.flag & 4 == 0 {
+                    aligned_reads += 1;
+                }
+                sam_writer.write_alignment(&alignment, rgid)?;
+            }
+
             if total_reads % 10000 == 0 {
                 eprint!("\r  Processed {total_reads} reads...");
             }
@@ -510,38 +540,68 @@ fn align_reads(
     Ok(())
 }
 
-fn process_pair(
-    aligner: &Aligner,
-    sam_writer: &mut SamWriter,
-    read1: &Read,
-    read2: &Read,
-    pairing: &PairingHeuristic,
-    rgid: &str,
-    total_reads: &mut u64,
-    aligned_reads: &mut u64,
-) -> Result<()> {
-    let pair_name = pair_name(read1, read2)?;
-
-    let mut aln1 = aligner.align(read1);
-    let mut aln2 = aligner.align(read2);
-    apply_pair_metadata(&mut aln1, &mut aln2, read1, read2, &pair_name, pairing);
-
-    *total_reads += 2;
-    if aln1.flag & 4 == 0 {
-        *aligned_reads += 1;
+fn read_chunk(reader: &mut FastqReader, chunk_size: usize) -> Result<Vec<Read>> {
+    let mut reads = Vec::with_capacity(chunk_size);
+    for _ in 0..chunk_size {
+        match reader.read_record()? {
+            Some(read) => reads.push(read),
+            None => break,
+        }
     }
-    if aln2.flag & 4 == 0 {
-        *aligned_reads += 1;
+    Ok(reads)
+}
+
+fn read_chunk_pairs_interleaved(
+    reader: &mut FastqReader,
+    chunk_size: usize,
+) -> Result<Vec<ReadPair>> {
+    let mut pairs = Vec::with_capacity(chunk_size);
+    for _ in 0..chunk_size {
+        let read1 = match reader.read_record()? {
+            Some(read) => read,
+            None => break,
+        };
+        let read2 = reader
+            .read_record()?
+            .ok_or_else(|| anyhow::anyhow!("Interleaved FASTQ missing mate for {}", read1.name))?;
+        let pair_name = pair_name(&read1, &read2)?;
+        pairs.push(ReadPair {
+            read1,
+            read2,
+            pair_name,
+        });
     }
+    Ok(pairs)
+}
 
-    sam_writer.write_alignment(&aln1, rgid)?;
-    sam_writer.write_alignment(&aln2, rgid)?;
-
-    if *total_reads % 10000 == 0 {
-        eprint!("\r  Processed {} reads...", *total_reads);
+fn read_chunk_pairs(
+    reader1: &mut FastqReader,
+    reader2: &mut FastqReader,
+    chunk_size: usize,
+) -> Result<Vec<ReadPair>> {
+    let mut pairs = Vec::with_capacity(chunk_size);
+    for _ in 0..chunk_size {
+        let read1 = reader1.read_record()?;
+        let read2 = reader2.read_record()?;
+        match (read1, read2) {
+            (None, None) => break,
+            (Some(_), None) => {
+                bail!("FASTQ 2 ended before FASTQ 1")
+            }
+            (None, Some(_)) => {
+                bail!("FASTQ 1 ended before FASTQ 2")
+            }
+            (Some(read1), Some(read2)) => {
+                let pair_name = pair_name(&read1, &read2)?;
+                pairs.push(ReadPair {
+                    read1,
+                    read2,
+                    pair_name,
+                });
+            }
+        }
     }
-
-    Ok(())
+    Ok(pairs)
 }
 
 fn pair_name(read1: &Read, read2: &Read) -> Result<String> {
@@ -594,6 +654,30 @@ impl PairingHeuristic {
 
         aln1.position <= aln2.position
     }
+}
+
+struct ReadPair {
+    read1: Read,
+    read2: Read,
+    pair_name: String,
+}
+
+fn align_pair(
+    aligner: &Aligner,
+    pair: &ReadPair,
+    pairing: &PairingHeuristic,
+) -> (Alignment, Alignment) {
+    let mut aln1 = aligner.align(&pair.read1);
+    let mut aln2 = aligner.align(&pair.read2);
+    apply_pair_metadata(
+        &mut aln1,
+        &mut aln2,
+        &pair.read1,
+        &pair.read2,
+        &pair.pair_name,
+        pairing,
+    );
+    (aln1, aln2)
 }
 
 fn apply_pair_metadata(
