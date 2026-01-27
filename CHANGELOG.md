@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add prek pre-commit hooks (fmt, clippy, check, test) with fail-fast for agent workflows
+- Add paired-end FASTQ alignment with SAM mate fields and interleaved support
 
 ## [1.4.2] - 2024-07-07
 
