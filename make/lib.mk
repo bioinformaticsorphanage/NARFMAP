@@ -26,7 +26,7 @@ include $(wildcard $(lib_objects:%.o=%.d))
 # we have to account for untested CUs.
 # TODO: enforce unit testing for all CUs
 #
-# Method: 
+# Method:
 # -------
 # Each Compilation Unit (CU) is tested independently. Header-only components
 # can be tested as if there was a completely empty corresponding CU.
@@ -40,10 +40,10 @@ include $(wildcard $(lib_objects:%.o=%.d))
 # Note: these tests should NOT have any dependency on the "system", particularly
 # no IOs (no file system, no network, rtc.)
 #
-# Note: each CU is wrapped in a corresponding $(CU)Wrapper.cpp that also 
+# Note: each CU is wrapped in a corresponding $(CU)Wrapper.cpp that also
 # include the optional mocks before the source code for the CU. This could have
 # been achieved with the g++ command line option "-include $(CU)Mocks.hpp".
-# Thhe choice for a frapper file is driven by two factors: (1) support for 
+# Thhe choice for a frapper file is driven by two factors: (1) support for
 # header-only CUs and (2) clarity - otherwise, the unit test $(CU).o could
 # be misleading for a casual observer.
 ###
@@ -56,7 +56,7 @@ unit_tests:=$(unit_test_sources:$(unit_test_src_dir)/%Gtest.cpp=%)
 
 define UNIT_GTEST
 include $(wildcard $(unit_test_build_dir)/$(1)Wrapper.d $(unit_test_build_dir)/$(1)Gtest.d)
-.PRECIOUS: $(unit_test_build_dir)/$(1)Wrapper.cpp $(unit_test_build_dir)/$(1)Wrapper.d 
+.PRECIOUS: $(unit_test_build_dir)/$(1)Wrapper.cpp $(unit_test_build_dir)/$(1)Wrapper.d
 $(unit_test_build_dir)/$(1)Wrapper.cpp: $(unit_test_build_dir)/.sentinel
 	$(SILENT_SE) $(ECHO) > $$@ ; \
 	[[ -e $(unit_test_src_dir)/$(1)Mocks.hpp ]] && $(ECHO) \#include \"$(1)Mocks.hpp\" >> $$@ ; \
@@ -127,7 +127,7 @@ $(DRAGEN_OS_BUILD)/$(lib_dir)/%.o: $(DRAGEN_OS_SRC_DIR)/lib/$(lib_dir)/%.c $(DRA
 # the g++ commandline option "-include $(CU)Mocks.hpp") instead of the original
 # CU.
 #
-# Method: 
+# Method:
 # -------
 # Each Compilation Unit (CU) is tested in the context of all the compilation units
 # built so far (all previous libraries and all CUs from the current library). In
@@ -189,5 +189,3 @@ libraries := $(DRAGEN_OS_BUILD)/libdragmap-$(lib_dir).a $(libraries)
 library_targets := $(lib_dir)-lib $(library_targets)
 .PHONY: $(lib_dir)-lib
 $(lib_dir)-lib : $(DRAGEN_OS_BUILD)/libdragmap-$(lib_dir).a
-
-

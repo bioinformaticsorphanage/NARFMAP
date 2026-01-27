@@ -184,7 +184,6 @@ impl<'a> Aligner<'a> {
         let max_score = (read_len as i32) * self.scoring.match_score;
         let score_ratio = (score as f64) / (max_score as f64);
 
-        let mapq = (score_ratio * 60.0).min(60.0).max(0.0) as u8;
-        mapq
+        (score_ratio * 60.0).clamp(0.0, 60.0) as u8
     }
 }

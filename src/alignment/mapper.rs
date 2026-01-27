@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::reference::hash_table::{HashTable, RefPosition};
+use crate::reference::hash_table::HashTable;
 use crate::Read;
 
 /// A candidate alignment region

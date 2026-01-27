@@ -15,4 +15,3 @@ $(DRAGMAP_FILES) : $(DRAGEN_SRC)/$$@
 	$(CP) $< $@.tmp && \
 	sed -i '/^\#ifndef OPEN_SOURCE/,/^\#endif  \/\/ OPEN_SOURCE/{d}' $@.tmp && \
 	mv $@.tmp $@ \
-

@@ -130,7 +130,7 @@ CXXSTD?=-std=c++17
 CPPFLAGS?=-Wall -ggdb3
 #some dragen sources need this
 CPPFLAGS += -DLOCAL_BUILD
-CPPFLAGS += -D'DRAGEN_OS_VERSION="$(DRAGEN_OS_VERSION)"' 
+CPPFLAGS += -D'DRAGEN_OS_VERSION="$(DRAGEN_OS_VERSION)"'
 CPPFLAGS += -DVERSION_STRING="$(VERSION_STRING)"
 CXXFLAGS+=$(CXXWARNINGS) $(CXXSTD)
 # Use gnu99 instead of c99, as strdup is not part of C99:
@@ -147,7 +147,7 @@ CPPFLAGS += -I $(DRAGEN_OS_SRC_DIR)/include
 CPPFLAGS += -I $(DRAGEN_SRC_DIR) -I $(DRAGEN_SRC_DIR)/common/public -I $(DRAGEN_SRC_DIR)/host/dragen_api/sampling
 CPPFLAGS += -I $(DRAGEN_SRC_DIR)/host/infra/public -I $(DRAGEN_SRC_DIR)/host/metrics/public
 CPPFLAGS += -I $(SSW_SRC_DIR)
-CPPFLAGS += -I $(DRAGEN_STUBS_DIR)/host/dragen_api -I $(DRAGEN_STUBS_DIR)/host/dragen_api/dbam  
+CPPFLAGS += -I $(DRAGEN_STUBS_DIR)/host/dragen_api -I $(DRAGEN_STUBS_DIR)/host/dragen_api/dbam
 CPPFLAGS += -I $(DRAGEN_STUBS_DIR)/host/infra/public -I $(DRAGEN_STUBS_DIR)/host/metrics/public
 CPPFLAGS += -I $(BAMTOOLS_STUBS_DIR)/include
 
@@ -156,7 +156,7 @@ LDFLAGS += -L $(BOOST_LIBRARYDIR)
 endif
 LDFLAGS += $(BOOST_LIBRARIES:%=-lboost_%)
 
-CPPFLAGS += -msse4.2 -mavx2 
+CPPFLAGS += -msse4.2 -mavx2
 ifdef DEBUG
 CPPFLAGS += -O0 -ggdb3 -femit-class-debug-always -fno-omit-frame-pointer
 ifeq ($(DEBUG),glibc)
@@ -183,7 +183,7 @@ CPPFLAGS += -fsanitize=address
 ifeq ($(ASAN),all)
 CPPFLAGS += -fsanitize=leak -fsanitize=undefined # Not supported by g++ 4.8
 endif # ifeq ($(ASAN,all)
-endif # ASAN 
+endif # ASAN
 
 
 LDFLAGS+= -lz -lrt -lgomp -lpthread
@@ -237,4 +237,3 @@ found_dragen_lib_dirs := $(sort $(patsubst %/, %, $(dir $(all_dragen_lib_sources
 ifneq ($(sort $(DRAGEN_OS_LIBS) $(DRAGEN_LIBS)),$(sort $(found_lib_dirs) $(found_dragen_lib_dirs)))
 $(error found libraries: $(sort $(found_dragen_lib_dirs) $(found_lib_dirs)): expected libraries: $(sort $(DRAGEN_OS_LIBS) $(DRAGEN_LIBS)): verify that the DRAGEN_OS_LIBS and DRAGEN_LIBS variables in config.mk lists the correct libraries)
 endif
-

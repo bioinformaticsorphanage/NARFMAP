@@ -196,7 +196,7 @@ static void sw_avx2_byte (const int8_t* ref,
   __m256i* pvHLoad = (__m256i*) memalign_local(AVX2_BYTE_ELEMS, sz);
   __m256i* pvE = (__m256i*) memalign_local(AVX2_BYTE_ELEMS, sz);
   __m256i* pvHmax = (__m256i*) memalign_local(AVX2_BYTE_ELEMS, sz);
-  
+
   // no need to clear pvHLoad and pvHmax
   memset(pvHStore, 0, sz);
   memset(pvE, 0, sz);

@@ -22,7 +22,7 @@ impl FastqReader {
 
         let inner: Box<dyn BufRead> = if path
             .extension()
-            .map_or(false, |ext| ext == "gz" || ext == "gzip")
+            .is_some_and(|ext| ext == "gz" || ext == "gzip")
         {
             Box::new(BufReader::new(GzDecoder::new(file)))
         } else {

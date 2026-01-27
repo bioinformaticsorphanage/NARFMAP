@@ -7,6 +7,7 @@ use std::os::raw::{c_char, c_double, c_int};
 /// Hash table type for generation
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // FFI enum - variants used by C code
 pub enum HashTableType {
     Normal = 0,
     MethylGToA = 1,
@@ -155,6 +156,10 @@ extern "C" {
 }
 
 /// Safe wrapper for setDefaultHashParams
+///
+/// # Safety
+/// - `config` must be a valid mutable reference
+/// - `dir` must be a valid null-terminated C string pointer
 pub unsafe fn set_default_hash_params(
     config: &mut HashTableConfig,
     dir: *const c_char,
@@ -164,6 +169,10 @@ pub unsafe fn set_default_hash_params(
 }
 
 /// Safe wrapper for generateHashTable
+///
+/// # Safety
+/// - `config` must be a valid mutable reference to initialized HashTableConfig
+/// - `argv` must point to `argc` valid null-terminated C string pointers
 pub unsafe fn generate_hash_table(
     config: &mut HashTableConfig,
     argc: c_int,
@@ -173,6 +182,9 @@ pub unsafe fn generate_hash_table(
 }
 
 /// Safe wrapper for freeHashParams
+///
+/// # Safety
+/// - `config` must be a valid mutable reference to previously initialized HashTableConfig
 pub unsafe fn free_hash_params(config: &mut HashTableConfig) {
     freeHashParams(config as *mut _);
 }

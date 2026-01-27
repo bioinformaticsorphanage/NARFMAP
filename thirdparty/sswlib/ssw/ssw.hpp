@@ -203,7 +203,7 @@ int32_t mark_mismatch (int32_t ref_begin1,
 					   const char* ref,
 					   const char* read,
 					   int32_t readLen,
-					   uint32_t** cigar, 
+					   uint32_t** cigar,
 					   int32_t* cigarLen);
 
 /*!	@function		Produce CIGAR 32-bit unsigned integer from CIGAR operation and CIGAR length
@@ -218,7 +218,7 @@ uint32_t to_cigar_int (uint32_t length, char op_letter);
 	@return			CIGAR operation character ('M', 'I', etc)
 */
 //char cigar_int_to_op (uint32_t cigar_int);
-static inline char cigar_int_to_op(uint32_t cigar_int) 
+static inline char cigar_int_to_op(uint32_t cigar_int)
 {
 	return (cigar_int & 0xfU) > 8 ? 'M': MAPSTR[cigar_int & 0xfU];
 }

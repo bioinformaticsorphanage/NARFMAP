@@ -374,7 +374,7 @@ bool AlignmentRescue::findRescueChain(
 #if 0
 // Constructor
 AlignmentRescue::AlignmentRescue( std::vector<Read*>& reads, std::vector<ChainBuilder*>& chainBuilders)
-  : m_pe_orientation(PE_ORIENTATION_FR) 
+  : m_pe_orientation(PE_ORIENTATION_FR)
 {
   //  std::cerr << "AlignmentRescue constructor" << std::endl;
   BOOST_ASSERT(reads.size() >= 1);
@@ -388,7 +388,7 @@ AlignmentRescue::AlignmentRescue( std::vector<Read*>& reads, std::vector<ChainBu
 
 // AddChain - internal helper to store the read/chain pair in order
 //
-void AlignmentRescue::AddChain(Read* theread, const SeedChain& chain) 
+void AlignmentRescue::AddChain(Read* theread, const SeedChain& chain)
 {
   // chain.set_paired(true);
   m_Chains.push_back(std::make_pair(theread, chain));
@@ -409,7 +409,7 @@ void AlignmentRescue::InitSingleEnded(Read* theread, ChainBuilder* chains) {
 
 #if 0
 
-// InitPairedEnd - initialize our list of chains with interleaved chains from 
+// InitPairedEnd - initialize our list of chains with interleaved chains from
 // each of the two reads
 //
 void AlignmentRescue::InitPairedEnd(
@@ -421,7 +421,7 @@ void AlignmentRescue::InitPairedEnd(
   BOOST_ASSERT(reads[0] && reads[1]);
 
   // Do an nxm join of all of the unfiltered chains from the two reads, emitting any
-  // naturally-occurring pairs.  
+  // naturally-occurring pairs.
   bool found_a_rescue_proof_pair = false;
   for ( auto& chain1 : *chainBuilders[0]) {
     // if ( it->isFiltered() )
@@ -438,7 +438,7 @@ void AlignmentRescue::InitPairedEnd(
         chain2.setFiltered(false);
 
         // avoid duplicate
-        if ( !emitted_chain1 ) { 
+        if ( !emitted_chain1 ) {
           emitted_chain1 = true;
           AddChain(reads[0], chain1);
         }
@@ -456,7 +456,7 @@ void AlignmentRescue::InitPairedEnd(
   }
 
   /*
-  if ( found_a_rescue_proof_pair ) 
+  if ( found_a_rescue_proof_pair )
     std::cerr << " Found a rescue proof pair" << std::endl;
   else
     std::cerr << " Didn't find any rescue proof pairs" << std::endl;
@@ -464,8 +464,8 @@ void AlignmentRescue::InitPairedEnd(
   // Now make a second pass through each chain, generating rescue pairs for any chains that
   // didn't have a really good match from the earlier loop.  In this pass we are ignoring the
   // filtered tag, but we are testing for chain quality based on seed length
-  int32_t rescue_seed_len = (found_a_rescue_proof_pair) ? 
-    static_cast<int32_t>(RESCUE_CHAIN_LENGTH_WITH_PAIRS) : 
+  int32_t rescue_seed_len = (found_a_rescue_proof_pair) ?
+    static_cast<int32_t>(RESCUE_CHAIN_LENGTH_WITH_PAIRS) :
     static_cast<int32_t>(RESCUE_CHAIN_LENGTH_NO_PAIRS);
 
   for ( int i = 0; i < 2; ++i ) {
@@ -494,7 +494,7 @@ bool AlignmentRescue::AreAPair(
 {
   int64_t insert_size = 0;
   if ( m_pe_orientation == PE_ORIENTATION_FF ) {
-    if ( chain1.isReverseComplement() != chain2.isReverseComplement() ) 
+    if ( chain1.isReverseComplement() != chain2.isReverseComplement() )
       return false;
   } else {
     if ( chain1.isReverseComplement() == chain2.isReverseComplement() )
@@ -505,30 +505,30 @@ bool AlignmentRescue::AreAPair(
       if ( chain1.is_reverse_complement() || !chain2.is_reverse_complement() )
         return false;
     } else if ( m_pe_orientation == PE_ORIENTATION_RF ) {
-      if ( !chain1.is_reverse_complement() || chain2.is_reverse_complement() ) 
+      if ( !chain1.is_reverse_complement() || chain2.is_reverse_complement() )
         return false;
-    } 
+    }
     */
 
     /*
-    std::cerr << " are a pair? chain1_start=" << chain1.get_ref_start() 
+    std::cerr << " are a pair? chain1_start=" << chain1.get_ref_start()
               << " rc=" << (chain1.is_reverse_complement()?std::string("true"):std::string("false"))
               << ", chain2_end="
-              << chain2.get_ref_end() 
+              << chain2.get_ref_end()
               << " rc=" << (chain2.is_reverse_complement()?std::string("true"):std::string("false"))
               << std::endl;
     */
   }
-   
+
   int64_t ref_end = std::max(chain1.lastReferencePosition(), chain2.lastReferencePosition());
   int64_t ref_start = std::min(chain1.firstReferencePosition(), chain2.firstReferencePosition());
   insert_size = ref_end - ref_start;
   return (insert_size >= min_insert_size) && (insert_size <= max_insert_size);
 }
 
-// GetRescueOffset - given an #exiting_chain# needing rescue (from the 
+// GetRescueOffset - given an #exiting_chain# needing rescue (from the
 // #idx_read_with#'th read), return a pair that includes: the reference
-// offset to to the target center of the set of rescue swaths, and 
+// offset to to the target center of the set of rescue swaths, and
 // whether the rescue should be reverse-complement
 //
 std::pair<int32_t, bool> AlignmentRescue::GetRescueOffset(
@@ -549,7 +549,7 @@ std::pair<int32_t, bool> AlignmentRescue::GetRescueOffset(
   return std::make_pair(offset, reverse_comp);
 }
 
-// GenerateRescue - generate a rescue chain for the specified read (#theread#), 
+// GenerateRescue - generate a rescue chain for the specified read (#theread#),
 // with distal terminus at reference position #pos#.
 //
 void AlignmentRescue::GenerateRescue(
@@ -570,7 +570,7 @@ void AlignmentRescue::GenerateRescue(
 #endif
 
 #if 0
-// RescueScan - TODO: scan the read to extract kmers with no more than RESCUE_MAX_SNPS 
+// RescueScan - TODO: scan the read to extract kmers with no more than RESCUE_MAX_SNPS
 //
 void AlignmentRescue::RescueScan(
     Read* theread,
@@ -589,7 +589,7 @@ void AlignmentRescue::RescueScan(
     assert(seed.isValid(0)); // getSeedOffset is supposed to produce offsets only for valid non-extended seeds
     GenerateRescue(seed, rescue_center, reverse_comp, chainBuilder);
   }
-  
+
   // should be very few
   for(auto chain: chainBuilder) {
     AddChain(theread, chain);
@@ -600,7 +600,7 @@ void AlignmentRescue::RescueScan(
 #if 0
 // GenerateRescueAlignments - there is a #chain#, belonging to #read_with#, that
 // is missing its pair.  Generate a set of rescue alignments in the #read_without#,
-// i.e. in the read that doesn't have the corresponding chain.  
+// i.e. in the read that doesn't have the corresponding chain.
 //
 void AlignmentRescue::GenerateRescueAlignments(
     std::vector<Read*>& reads,
@@ -608,10 +608,10 @@ void AlignmentRescue::GenerateRescueAlignments(
     SeedChain& existing_chain)
 {
   /*
-  std::cerr << "Generate Rescue Alignments for chain at " << existing_chain.get_ref_start() 
+  std::cerr << "Generate Rescue Alignments for chain at " << existing_chain.get_ref_start()
             << ", seed length=" << existing_chain.get_seed_len() << std::endl;
   */
-    
+
   Read* read_with = reads[idx_read_with_chain];
   Read* read_without = reads[(idx_read_with_chain+1)%2];
   std::pair<int32_t, bool> offset_and_rc = GetRescueOffset(existing_chain, idx_read_with_chain);

@@ -1,0 +1,55 @@
+# prek configuration - fail-fast for agent workflows
+# Install hooks: prek install
+# Run manually: prek run --all-files
+# Docs: https://prek.j178.dev
+
+fail_fast: true
+default_install_hook_types: [pre-commit]
+
+repos:
+  # Fast built-in checks (Rust-native, instant startup)
+  - repo: builtin
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-toml
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Rust toolchain hooks - ordered by speed (fail fast)
+  - repo: local
+    hooks:
+      # 1. Format check (fast, catches style issues)
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # 2. Clippy lint (medium speed, catches bugs/smells)
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # 3. Compilation check (uses cache, catches type errors)
+      - id: cargo-check
+        name: cargo check
+        entry: cargo check --all-targets --all-features
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # 4. Tests (slowest but comprehensive - agents must run tests)
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --all-features
+        language: system
+        types: [rust]
+        pass_filenames: false

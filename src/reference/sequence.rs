@@ -1,7 +1,7 @@
 //! Reference sequence loading and access
 
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, Result};

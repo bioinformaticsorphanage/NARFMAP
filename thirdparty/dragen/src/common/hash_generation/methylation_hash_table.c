@@ -79,4 +79,3 @@ void UpdateContigsForMethylation(refRec_t* refRecs, uint32_t numRefSeqs, uint64_
 // (odd). (Unlike the refRecs, the order of #liftRecs# does not mattter).
 // Every liftRec_t with qid=n and rid=m, wll be replaced with two liftRec_t's with qid=2n rid=2m and
 // qid=2n+1 rid=2m+1.
-

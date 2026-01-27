@@ -26,11 +26,11 @@ Reference K-mers: (K=17)
         and hence a K-mer with frequency N is included N times.
   Average K-mer frequency: 2.12
   K-mer frequency histogram:
-     1   2    3  
+     1   2    3
      257 24   333
      42% 3.9% 54%
   Log2 K-mer frequency histogram:
-     0   1  
+     0   1
      257 357
      42% 58%
 
@@ -79,16 +79,16 @@ Hash buckets:
   Records per bucket: 8
   Number of buckets:  1024
   Histogram of raw K-mer bucket occupancy:
-     0   1   2    3    4    5     6     7     8    
-     707 174 31   84   22   2     1     2     1    
+     0   1   2    3    4    5     6     7     8
+     707 174 31   84   22   2     1     2     1
      69% 17% 3.0% 8.2% 2.1% 0.20% 0.10% 0.20% 0.10%
   Histogram of bucket occupancy after extending or rejecting high frequency seeds:
-     0   1   2    3    4    5     6     7     8    
-     707 174 31   84   22   2     1     2     1    
+     0   1   2    3    4    5     6     7     8
+     707 174 31   84   22   2     1     2     1
      69% 17% 3.0% 8.2% 2.1% 0.20% 0.10% 0.20% 0.10%
   Histogram of physical bucket occupancy as mapped:
-     0   1   2    3    4    5     6     7     8    
-     707 174 31   84   22   2     1     2     1    
+     0   1   2    3    4    5     6     7     8
+     707 174 31   84   22   2     1     2     1
      69% 17% 3.0% 8.2% 2.1% 0.20% 0.10% 0.20% 0.10%
 
 Seed extensions:
@@ -125,7 +125,7 @@ Seed extensions:
     -
     -
   Remaining primary hit K-mer frequency histogram:
-     1   2    3  
+     1   2    3
      257 24   333
      42% 3.9% 54%
   Post-extended K-mer frequency histogram:
@@ -145,15 +145,15 @@ Hash chaining and probing:
     -
     -
   Bucket chain length histogram:
-     0   
+     0
      1024
      100%
   Bucket probe length histogram:
-     0   
+     0
      1024
      100%
   Chain or probe length histogram:
-     0   
+     0
      1024
      100%
 
@@ -170,4 +170,3 @@ Compression:          Records        Bits    Mean
   Misc bits:   5595
   Final bits:  663992
   Final bytes: 82999
-

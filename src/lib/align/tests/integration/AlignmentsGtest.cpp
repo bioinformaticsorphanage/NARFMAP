@@ -1240,4 +1240,3 @@ TEST(Alignments, fixForWrongSoftClipAtEnd)
       result);
   ASSERT_EQ(expected, result);
 }
-

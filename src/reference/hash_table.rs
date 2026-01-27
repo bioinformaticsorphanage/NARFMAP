@@ -124,7 +124,6 @@ impl HashTableConfig {
 /// CRC64 hash state - precomputed lookup tables
 pub struct Crc64Init {
     tables: Vec<[u64; 256]>,
-    bits: u32,
 }
 
 impl Crc64Init {
@@ -132,21 +131,21 @@ impl Crc64Init {
     /// Matches DRAGEN's crcHash64Init()
     pub fn new(bits: u32, poly: u64) -> Self {
         // DRAGEN uses (bits+7)/8 bytes for table computation
-        let num_bytes = ((bits + 7) / 8) as usize;
+        let num_bytes = bits.div_ceil(8) as usize;
         let mut tables = vec![[0u64; 256]; num_bytes];
 
         // For each byte position (i=0 is LSB)
-        for byte_pos in 0..num_bytes {
+        for (byte_pos, table) in tables.iter_mut().enumerate() {
             // For each possible byte value
             for byte_val in 0u64..256 {
                 // DRAGEN: data = j << (i * 8), then crcHashSlow(bits, poly, &data)
                 let data = byte_val << (byte_pos * 8);
                 let hash = Self::crc_hash_slow(bits, poly, data);
-                tables[byte_pos][byte_val as usize] = hash;
+                table[byte_val as usize] = hash;
             }
         }
 
-        Self { tables, bits }
+        Self { tables }
     }
 
     /// Slow CRC hash matching DRAGEN's crcHashSlow()

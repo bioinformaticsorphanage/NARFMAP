@@ -191,6 +191,7 @@ fn main() -> Result<()> {
 // Build Hash Table
 // ============================================================================
 
+#[allow(clippy::too_many_arguments)]
 fn build_hash_table(
     reference: &std::path::Path,
     output_dir: &std::path::Path,
@@ -321,6 +322,7 @@ fn path_to_cstring(path: &std::path::Path) -> Result<CString> {
 // Align Reads
 // ============================================================================
 
+#[allow(clippy::too_many_arguments)]
 fn align_reads(
     ref_dir: &std::path::Path,
     fastq1: &std::path::Path,
@@ -438,7 +440,7 @@ fn align_reads(
             }
         }
     } else {
-        let mut fastq_reader = FastqReader::open(fastq1)?;
+        let fastq_reader = FastqReader::open(fastq1)?;
         for read_result in fastq_reader {
             let read = read_result?;
             total_reads += 1;

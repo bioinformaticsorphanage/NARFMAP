@@ -81,5 +81,3 @@ struct _profile_avx2{
   int32_t n;
   uint8_t bias;
 };
-
-

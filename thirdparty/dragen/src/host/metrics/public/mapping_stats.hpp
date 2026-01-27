@@ -323,15 +323,15 @@ private:
     bool     containsIndel  = false;  // read contains indel?
 
     // Walk the cigar
-    
+
 
     const auto& cigar = dbh->getCigar();
     const int16_t   n_cigar_recs = cigar.end() - cigar.begin();
     auto it = cigar.begin();
-    
+
     for (int32_t j = 0;  j < n_cigar_recs; ++j,  ++it ){
 
-  
+
       auto & operation = *it;
       const unsigned count = operation.second;
 
@@ -439,7 +439,7 @@ void printMapAlignCommonStats(
     const auto& cigar = dbh->getCigar();
     const int16_t   n_cigar_recs = cigar.end() - cigar.begin();
     auto it = cigar.begin();
-        
+
     for (int32_t j = 0;  j < n_cigar_recs; ++j,  ++it ){
        auto & operation = *it;
        const unsigned oplen = operation.second;
@@ -473,4 +473,3 @@ void printMapAlignCommonStats(
 };
 
 #endif
-

@@ -54,5 +54,3 @@ libraries := $(DRAGEN_OS_BUILD)/libdragmap-$(lib_dir).a $(libraries)
 library_targets := $(lib_dir)-lib $(library_targets)
 .PHONY: $(lib_dir)-lib
 $(lib_dir)-lib : $(DRAGEN_OS_BUILD)/libdragmap-$(lib_dir).a
-
-

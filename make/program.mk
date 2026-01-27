@@ -19,4 +19,3 @@ $(DRAGEN_OS_BUILD)/$(program): $(DRAGEN_OS_BUILD)/$(program).o $(libraries)
 #$(DRAGEN_OS_BUILD)/$(program).d: ;
 
 include $(wildcard $(DRAGEN_OS_BUILD)/$(program).d)
-

@@ -15,7 +15,7 @@ void ReadGroupAlignmentCounts::updateDups(const DbamHeader* dbh, const bool exte
   } else {
     // unmapped reads cannot be duplicates, supplementary or have soft clipped reads
     // we still want to count bases
-  
+
     const uint8_t* seq       = dbh->getConstQualities();
     const uint32_t seqLength = dbh->getSequenceLen();
 
@@ -137,7 +137,7 @@ void ReadGroupAlignmentCounts::updateNonDups(const DbamHeader* dbh, const bool e
   // NH tag to determine if it is a unique or multimapping alignment. If the NH tag is zero, then this
   // field was not populated and we fall back to the old method of using MAPQ as a best guess..
   //const bool multiple = dbh->getNumHits() ? (not dbh->isUnique()) : (mapq == 0);
-  //GR falling back to mapq==0 method for dragmap 
+  //GR falling back to mapq==0 method for dragmap
   const bool multiple = mapq == 0 ;
 
   const bool isPaired = dbh->isPairMapped();

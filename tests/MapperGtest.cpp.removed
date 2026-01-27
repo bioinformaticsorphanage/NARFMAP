@@ -217,4 +217,3 @@ void Environment::TearDown()
   }
   hashtable.reset(nullptr);
 }
-

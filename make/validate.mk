@@ -79,7 +79,7 @@ COMP_FILES:=$(subst .sam,.comp,$(SAM_FILES))
 COMPARE_DIR=$(OUTPUT)/compare-$(ID)-$*
 
 .PRECIOUS: $(OUTPUT)/$(STATIC_PREFIX)-%-$(ID).comp
-$(OUTPUT)/$(STATIC_PREFIX)-%-$(ID).comp: $(BASELINE_PREFIX)-%.sam $(OUTPUT)/$(STATIC_PREFIX)-%-$(ID).sam 
+$(OUTPUT)/$(STATIC_PREFIX)-%-$(ID).comp: $(BASELINE_PREFIX)-%.sam $(OUTPUT)/$(STATIC_PREFIX)-%-$(ID).sam
 	mkdir -p $(COMPARE_DIR) && (echo -ne "$*\t" && $(COMPARE) $^ -o $(COMPARE_DIR) -k yes --position-mismatches yes |grep -v IMPLEMENTED |grep -v _SD_ | grep mismatch |sed 's/=/ /') > $(SAFEPIPETARGET)
 
 % : $(OUTPUT)/$(STATIC_PREFIX)-%-$(ID).comp
@@ -109,4 +109,3 @@ clean:
 
 clean-diffs:
 	-rm $(COMP_FILES)
-

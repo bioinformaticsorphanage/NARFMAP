@@ -71,7 +71,7 @@ fn main() {
 
         let status = cmd
             .status()
-            .expect(&format!("Failed to compile {}", src.display()));
+            .unwrap_or_else(|_| panic!("Failed to compile {}", src.display()));
         if !status.success() {
             panic!("Compilation failed for {}", src.display());
         }

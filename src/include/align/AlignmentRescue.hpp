@@ -218,8 +218,8 @@ public:
 #if 0
 
   // input interface
-  //AlignmentRescue( 
-  //    std::vector<Read*>& reads, 
+  //AlignmentRescue(
+  //    std::vector<Read*>& reads,
   //    std::vector<ChainBuilder*>& chainBuilders)
   //  ;
 
@@ -258,7 +258,7 @@ private:
     ;
 
   void AddChain(
-      Read* read, 
+      Read* read,
       const SeedChain& chain)
     ;
 

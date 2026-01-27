@@ -1012,7 +1012,7 @@ uint32_t* store_previous_m (int8_t choice,	// 0: current not M, 1: current match
     (*length_x) = 0;
   }
   return new_cigar;
-}				
+}
 
 /*! @function:
      1. Calculate the number of mismatches.
@@ -1080,4 +1080,3 @@ int32_t mark_mismatch (int32_t ref_begin1,
   (*cigar) = new_cigar;
   return mismatch_length;
 }
-

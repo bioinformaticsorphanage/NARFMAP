@@ -51,4 +51,3 @@ include $(wildcard $(TEST_BUILD_DIR)/$(1).d)
 endef # define SYSTEM_TOOL
 
 $(foreach t,$(system_tools),$(eval $(call SYSTEM_TOOL,$(t))))
-
