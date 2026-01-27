@@ -431,6 +431,59 @@ mod tests {
         assert_eq!(crc.tables.len(), 5); // ceil(36/8) = 5 bytes
     }
 
+    /// Port of CrcHasherGtest::KnownHashValues from C++
+    /// Values taken from Hashtable V8, polynomial 54-bit 0x2C991CE6A8DD55
+    #[test]
+    #[allow(clippy::unreadable_literal, clippy::unusual_byte_groupings)]
+    fn test_crc_hasher_known_values() {
+        // polynomial and value taken and verified from Hashtable V8
+        // Values match C++ test exactly - don't reformat
+        let primary_hasher = Crc64Init::new(54, 0x2C991CE6A8DD55);
+
+        assert_eq!(primary_hasher.hash(0x3543543543), 0x35de20855c4d8e);
+        assert_eq!(primary_hasher.hash(0x10d50d50d50), 0x2643a64efec778);
+        assert_eq!(primary_hasher.hash(0x14354354354), 0x24e8498f420b6f);
+        assert_eq!(primary_hasher.hash(0x150d50d50d5), 0x9287b35d36195);
+        assert_eq!(primary_hasher.hash(0xd50d50d50d), 0x22d3a73e8851c7);
+    }
+
+    /// Port of CrcPolynomial tests - verify polynomial byte ordering
+    /// In Rust we use raw u64, so test that the bit layout matches C++ expectations
+    #[test]
+    #[allow(clippy::unusual_byte_groupings)]
+    fn test_crc_polynomial_byte_order() {
+        // C++ stores polynomial as little-endian bytes
+        // poly(56, "2C991CE6A8DD55") stores bytes as [0x55, 0xDD, 0xA8, 0xE6, 0x1C, 0x99, 0x2C]
+        // When read as u64 little-endian, this is 0x002C991CE6A8DD55
+        let poly: u64 = 0x002C_991C_E6A8_DD55;
+        let bytes = poly.to_le_bytes();
+        assert_eq!(bytes[0], 0x55);
+        assert_eq!(bytes[1], 0xDD);
+        assert_eq!(bytes[2], 0xA8);
+        assert_eq!(bytes[3], 0xE6);
+        assert_eq!(bytes[4], 0x1C);
+        assert_eq!(bytes[5], 0x99);
+        assert_eq!(bytes[6], 0x2C);
+        assert_eq!(bytes[7], 0x00);
+    }
+
+    /// Test slow CRC hash matches expected values
+    #[test]
+    #[allow(clippy::unreadable_literal, clippy::unusual_byte_groupings)]
+    fn test_crc_hash_slow() {
+        // Simple test: hash of 0 should be 0 (no bits set)
+        let hash = Crc64Init::crc_hash_slow(54, 0x2C991CE6A8DD55, 0);
+        assert_eq!(hash, 0);
+
+        // Test that slow and table-based match
+        let hasher = Crc64Init::new(54, 0x2C991CE6A8DD55);
+        for &data in &[1u64, 0x100, 0x0001_0000, 0x0100_0000, 0x0001_0000_0000] {
+            let slow = Crc64Init::crc_hash_slow(54, 0x2C991CE6A8DD55, data);
+            let fast = hasher.hash(data);
+            assert_eq!(slow, fast, "mismatch for data 0x{data:x}");
+        }
+    }
+
     #[test]
     fn test_seed_encoding() {
         let config = HashTableConfig {
