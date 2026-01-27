@@ -131,3 +131,44 @@ pub fn reverse_complement(seq: &[u8]) -> Vec<u8> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reference::hash_table::HashTable;
+    use std::path::PathBuf;
+
+    fn tiny_ref_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("tiny")
+            .join("tiny-2x1Xrepeats.v8")
+    }
+
+    #[test]
+    fn reverse_complement_handles_case_and_unknown() {
+        let seq = b"ACGTNacgtn".to_vec();
+        let rc = reverse_complement(&seq);
+
+        assert_eq!(rc, b"NACGTNACGT");
+    }
+
+    #[test]
+    fn map_returns_empty_for_short_reads() {
+        let ref_dir = tiny_ref_dir();
+        assert!(ref_dir.exists(), "missing tiny reference data");
+
+        let hash_table = HashTable::load(&ref_dir).unwrap();
+        let seed_len = hash_table.config.seed_len();
+        let read = Read {
+            name: "short".to_string(),
+            sequence: vec![b'A'; seed_len.saturating_sub(1)],
+            quality: vec![b'I'; seed_len.saturating_sub(1)],
+        };
+
+        let mapper = SeedMapper::new(&hash_table);
+        let candidates = mapper.map(&read);
+
+        assert!(candidates.is_empty());
+    }
+}

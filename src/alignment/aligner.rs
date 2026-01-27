@@ -188,3 +188,58 @@ impl<'a> Aligner<'a> {
         (score_ratio * 60.0).clamp(0.0, 60.0) as u8
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reference::hash_table::HashTable;
+    use crate::reference::ReferenceSequence;
+    use std::path::PathBuf;
+
+    fn tiny_ref_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("tiny")
+            .join("tiny-2x1Xrepeats.v8")
+    }
+
+    #[test]
+    fn build_cigar_collapses_operations() {
+        let ops = vec![
+            AlignmentOperation::Match,
+            AlignmentOperation::Match,
+            AlignmentOperation::Ins,
+            AlignmentOperation::Ins,
+            AlignmentOperation::Del,
+            AlignmentOperation::Subst,
+            AlignmentOperation::Subst,
+        ];
+
+        let cigar = Aligner::build_cigar(&ops);
+
+        assert_eq!(cigar, "2M2I1D2M");
+    }
+
+    #[test]
+    fn build_cigar_skips_yclip_only() {
+        let ops = vec![AlignmentOperation::Yclip(3)];
+
+        let cigar = Aligner::build_cigar(&ops);
+
+        assert_eq!(cigar, "*");
+    }
+
+    #[test]
+    fn calculate_mapq_clamps_range() {
+        let ref_dir = tiny_ref_dir();
+        assert!(ref_dir.exists(), "missing tiny reference data");
+
+        let hash_table = HashTable::load(&ref_dir).unwrap();
+        let reference = ReferenceSequence::load(&ref_dir).unwrap();
+        let aligner = Aligner::new(&hash_table, &reference);
+
+        assert_eq!(aligner.calculate_mapq(0, 10), 0);
+        assert_eq!(aligner.calculate_mapq(10, 10), 60);
+        assert_eq!(aligner.calculate_mapq(20, 10), 60);
+    }
+}

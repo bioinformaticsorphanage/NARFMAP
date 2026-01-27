@@ -97,3 +97,68 @@ impl ReferenceSequence {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reference_with_data(data: Vec<u8>) -> ReferenceSequence {
+        ReferenceSequence {
+            sequences: vec![RefSeqInfo {
+                name: "ref".to_string(),
+                length: data.len() as u64 * 2,
+                offset: 0,
+            }],
+            data,
+        }
+    }
+
+    #[test]
+    fn decodes_even_and_odd_nibbles() {
+        let reference = reference_with_data(vec![0x21, 0x84]);
+        let seq = reference.get_sequence(0, 4);
+
+        assert_eq!(seq, b"ACGT");
+    }
+
+    #[test]
+    fn returns_n_for_out_of_range_positions() {
+        let reference = reference_with_data(vec![0x21]);
+        let seq = reference.get_sequence(0, 4);
+
+        assert_eq!(seq, b"ACNN");
+    }
+
+    #[test]
+    fn find_sequence_returns_relative_position() {
+        let reference = ReferenceSequence {
+            sequences: vec![
+                RefSeqInfo {
+                    name: "chr1".to_string(),
+                    length: 5,
+                    offset: 0,
+                },
+                RefSeqInfo {
+                    name: "chr2".to_string(),
+                    length: 3,
+                    offset: 5,
+                },
+            ],
+            data: vec![0; 4],
+        };
+
+        let (seq, pos) = reference.find_sequence(0).unwrap();
+        assert_eq!(seq.name, "chr1");
+        assert_eq!(pos, 0);
+
+        let (seq, pos) = reference.find_sequence(5).unwrap();
+        assert_eq!(seq.name, "chr2");
+        assert_eq!(pos, 0);
+
+        let (seq, pos) = reference.find_sequence(7).unwrap();
+        assert_eq!(seq.name, "chr2");
+        assert_eq!(pos, 2);
+
+        assert!(reference.find_sequence(8).is_none());
+    }
+}

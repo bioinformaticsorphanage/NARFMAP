@@ -90,3 +90,70 @@ impl SamWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reference::ReferenceSequence;
+    use tempfile::NamedTempFile;
+
+    fn tiny_ref_dir() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("tiny")
+            .join("tiny-2x1Xrepeats.v8")
+    }
+
+    fn sample_alignment() -> Alignment {
+        Alignment {
+            read_name: "read1".to_string(),
+            flag: 0,
+            ref_name: "ref".to_string(),
+            position: 1,
+            mapq: 60,
+            cigar: "4M".to_string(),
+            mate_ref_name: "*".to_string(),
+            mate_position: 0,
+            template_length: 0,
+            sequence: b"ACGT".to_vec(),
+            quality: vec![0, 1, 2, 3],
+            score: 0,
+        }
+    }
+
+    #[test]
+    fn writes_header_and_alignment() {
+        let ref_dir = tiny_ref_dir();
+        assert!(ref_dir.exists(), "missing tiny reference data");
+
+        let reference = ReferenceSequence::load(&ref_dir).unwrap();
+        let temp = NamedTempFile::new().unwrap();
+        let path = temp.path().to_path_buf();
+
+        let mut writer = SamWriter::create(&path).unwrap();
+        writer.write_header(&reference, "rg1", "sample").unwrap();
+        writer.write_alignment(&sample_alignment(), "rg1").unwrap();
+        writer.finish().unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mut lines = content.lines();
+
+        assert_eq!(lines.next().unwrap(), "@HD\tVN:1.6\tSO:unsorted");
+
+        let sq_line = lines.next().unwrap();
+        let expected_len = reference.total_length();
+        assert_eq!(sq_line, format!("@SQ\tSN:ref\tLN:{expected_len}"));
+
+        assert_eq!(lines.next().unwrap(), "@RG\tID:rg1\tSM:sample");
+        assert!(lines
+            .next()
+            .unwrap()
+            .starts_with("@PG\tID:narfmap\tPN:narfmap\tVN:"));
+
+        let record = lines.next().unwrap();
+        assert_eq!(
+            record,
+            "read1\t0\tref\t1\t60\t4M\t*\t0\t0\tACGT\t!\"#$\tRG:Z:rg1"
+        );
+    }
+}

@@ -116,6 +116,14 @@ enum Commands {
         #[arg(long = "num-threads", default_value = "8")]
         num_threads: usize,
 
+        /// Minimum insert size for proper pairing
+        #[arg(long = "min-insert-size", default_value = "0")]
+        min_insert_size: u64,
+
+        /// Maximum insert size for proper pairing
+        #[arg(long = "max-insert-size", default_value = "1000")]
+        max_insert_size: u64,
+
         /// Interleaved FASTQ input
         #[arg(long = "interleaved")]
         interleaved: bool,
@@ -167,6 +175,8 @@ fn main() -> Result<()> {
             rgid,
             rgsm,
             num_threads,
+            min_insert_size,
+            max_insert_size,
             interleaved,
         } => {
             align_reads(
@@ -178,6 +188,8 @@ fn main() -> Result<()> {
                 &rgid,
                 &rgsm,
                 num_threads,
+                min_insert_size,
+                max_insert_size,
                 interleaved,
                 cli.verbose,
             )?;
@@ -337,6 +349,8 @@ fn align_reads(
     rgid: &str,
     rgsm: &str,
     _num_threads: usize,
+    min_insert_size: u64,
+    max_insert_size: u64,
     interleaved: bool,
     verbose: bool,
 ) -> Result<()> {
@@ -362,6 +376,15 @@ fn align_reads(
             bail!("FASTQ file not found: {}", fq2.display());
         }
     }
+
+    if min_insert_size > max_insert_size {
+        bail!("--min-insert-size cannot be greater than --max-insert-size");
+    }
+
+    let pairing = PairingHeuristic {
+        min_insert_size,
+        max_insert_size,
+    };
 
     // Load reference and hash table
     println!("Loading reference...");
@@ -412,6 +435,7 @@ fn align_reads(
                 &mut sam_writer,
                 &read1,
                 &read2,
+                &pairing,
                 rgid,
                 &mut total_reads,
                 &mut aligned_reads,
@@ -437,6 +461,7 @@ fn align_reads(
                         &mut sam_writer,
                         &read1,
                         &read2,
+                        &pairing,
                         rgid,
                         &mut total_reads,
                         &mut aligned_reads,
@@ -490,6 +515,7 @@ fn process_pair(
     sam_writer: &mut SamWriter,
     read1: &Read,
     read2: &Read,
+    pairing: &PairingHeuristic,
     rgid: &str,
     total_reads: &mut u64,
     aligned_reads: &mut u64,
@@ -498,7 +524,7 @@ fn process_pair(
 
     let mut aln1 = aligner.align(read1);
     let mut aln2 = aligner.align(read2);
-    apply_pair_metadata(&mut aln1, &mut aln2, read1, read2, &pair_name);
+    apply_pair_metadata(&mut aln1, &mut aln2, read1, read2, &pair_name, pairing);
 
     *total_reads += 2;
     if aln1.flag & 4 == 0 {
@@ -537,12 +563,46 @@ fn normalize_pair_name(name: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PairingHeuristic {
+    min_insert_size: u64,
+    max_insert_size: u64,
+}
+
+impl PairingHeuristic {
+    fn is_proper_pair(&self, aln1: &Alignment, aln2: &Alignment, template_length: i64) -> bool {
+        if template_length == 0 {
+            return false;
+        }
+        if aln1.flag & 4 != 0 || aln2.flag & 4 != 0 {
+            return false;
+        }
+        if aln1.ref_name != aln2.ref_name {
+            return false;
+        }
+
+        let tlen_abs = template_length.unsigned_abs();
+        if tlen_abs < self.min_insert_size || tlen_abs > self.max_insert_size {
+            return false;
+        }
+
+        let read1_forward = aln1.flag & 0x10 == 0;
+        let read2_reverse = aln2.flag & 0x10 != 0;
+        if !read1_forward || !read2_reverse {
+            return false;
+        }
+
+        aln1.position <= aln2.position
+    }
+}
+
 fn apply_pair_metadata(
     aln1: &mut Alignment,
     aln2: &mut Alignment,
     read1: &Read,
     read2: &Read,
     pair_name: &str,
+    pairing: &PairingHeuristic,
 ) {
     let unmapped1 = aln1.flag & 4 != 0;
     let unmapped2 = aln2.flag & 4 != 0;
@@ -614,5 +674,111 @@ fn apply_pair_metadata(
     } else {
         aln1.template_length = 0;
         aln2.template_length = 0;
+    }
+
+    if pairing.is_proper_pair(aln1, aln2, template_length) {
+        aln1.flag |= 0x2;
+        aln2.flag |= 0x2;
+    } else {
+        aln1.flag &= !0x2;
+        aln2.flag &= !0x2;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_with_len(name: &str, len: usize) -> Read {
+        Read {
+            name: name.to_string(),
+            sequence: vec![b'A'; len],
+            quality: vec![b'I'; len],
+        }
+    }
+
+    fn mapped_alignment(read: &Read, ref_name: &str, position: u64, flag: u16) -> Alignment {
+        Alignment {
+            read_name: read.name.clone(),
+            flag,
+            ref_name: ref_name.to_string(),
+            position,
+            mapq: 60,
+            cigar: format!("{}M", read.sequence.len()),
+            mate_ref_name: "*".to_string(),
+            mate_position: 0,
+            template_length: 0,
+            sequence: read.sequence.clone(),
+            quality: read.quality.clone(),
+            score: 100,
+        }
+    }
+
+    #[test]
+    fn sets_proper_pair_for_fr_within_insert_range() {
+        let read1 = read_with_len("read/1", 100);
+        let read2 = read_with_len("read/2", 100);
+        let mut aln1 = mapped_alignment(&read1, "chr1", 100, 0);
+        let mut aln2 = mapped_alignment(&read2, "chr1", 250, 0x10);
+        let pairing = PairingHeuristic {
+            min_insert_size: 0,
+            max_insert_size: 500,
+        };
+
+        apply_pair_metadata(&mut aln1, &mut aln2, &read1, &read2, "read", &pairing);
+
+        assert!(aln1.flag & 0x2 != 0);
+        assert!(aln2.flag & 0x2 != 0);
+    }
+
+    #[test]
+    fn does_not_set_proper_pair_for_wrong_orientation() {
+        let read1 = read_with_len("read/1", 100);
+        let read2 = read_with_len("read/2", 100);
+        let mut aln1 = mapped_alignment(&read1, "chr1", 100, 0x10);
+        let mut aln2 = mapped_alignment(&read2, "chr1", 250, 0);
+        let pairing = PairingHeuristic {
+            min_insert_size: 0,
+            max_insert_size: 500,
+        };
+
+        apply_pair_metadata(&mut aln1, &mut aln2, &read1, &read2, "read", &pairing);
+
+        assert!(aln1.flag & 0x2 == 0);
+        assert!(aln2.flag & 0x2 == 0);
+    }
+
+    #[test]
+    fn does_not_set_proper_pair_for_insert_size_out_of_range() {
+        let read1 = read_with_len("read/1", 100);
+        let read2 = read_with_len("read/2", 100);
+        let mut aln1 = mapped_alignment(&read1, "chr1", 100, 0);
+        let mut aln2 = mapped_alignment(&read2, "chr1", 2000, 0x10);
+        let pairing = PairingHeuristic {
+            min_insert_size: 0,
+            max_insert_size: 500,
+        };
+
+        apply_pair_metadata(&mut aln1, &mut aln2, &read1, &read2, "read", &pairing);
+
+        assert!(aln1.flag & 0x2 == 0);
+        assert!(aln2.flag & 0x2 == 0);
+    }
+
+    #[test]
+    fn does_not_set_proper_pair_when_mate_unmapped() {
+        let read1 = read_with_len("read/1", 100);
+        let read2 = read_with_len("read/2", 100);
+        let mut aln1 = mapped_alignment(&read1, "chr1", 100, 0);
+        let mut aln2 = Alignment::unmapped(&read2);
+        let pairing = PairingHeuristic {
+            min_insert_size: 0,
+            max_insert_size: 500,
+        };
+
+        apply_pair_metadata(&mut aln1, &mut aln2, &read1, &read2, "read", &pairing);
+
+        assert!(aln1.flag & 0x2 == 0);
+        assert!(aln2.flag & 0x2 == 0);
     }
 }
