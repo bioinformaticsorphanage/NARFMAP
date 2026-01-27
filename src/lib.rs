@@ -21,8 +21,8 @@ impl Default for ScoringParams {
         Self {
             match_score: 1,
             mismatch_score: -4,
-            gap_open: 7,
-            gap_extend: 1,
+            gap_open: -7,   // bio crate expects non-positive penalty
+            gap_extend: -1, // bio crate expects non-positive penalty
         }
     }
 }

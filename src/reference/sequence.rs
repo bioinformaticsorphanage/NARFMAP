@@ -31,10 +31,10 @@ impl ReferenceSequence {
         file.read_to_end(&mut data)?;
 
         // For now, assume single sequence
-        // TODO: Parse ref_index.bin for proper sequence info
+        // DRAGEN uses 4 bits per base (2 bases per byte)
         let sequences = vec![RefSeqInfo {
             name: "ref".to_string(),
-            length: data.len() as u64 * 4, // 2 bits per base, 4 bases per byte
+            length: data.len() as u64 * 2, // 4 bits per base, 2 bases per byte
             offset: 0,
         }];
 
@@ -42,26 +42,37 @@ impl ReferenceSequence {
     }
 
     /// Get sequence at position (returns bases as ASCII)
+    /// DRAGEN format: 4 bits per base, 2 bases per byte
+    /// Low nibble = even position, high nibble = odd position
+    /// Base encoding: A=1, C=2, G=4, T=8 (one-hot), 0=N
     pub fn get_sequence(&self, start: u64, length: usize) -> Vec<u8> {
         let mut result = Vec::with_capacity(length);
 
         for i in 0..length {
             let pos = start + i as u64;
-            let byte_idx = (pos / 4) as usize;
-            let bit_offset = ((pos % 4) * 2) as u32;
+            let byte_idx = (pos / 2) as usize;
+            let is_odd = (pos % 2) == 1;
 
             if byte_idx >= self.data.len() {
                 result.push(b'N');
                 continue;
             }
 
-            let bits = (self.data[byte_idx] >> (6 - bit_offset)) & 0x03;
-            let base = match bits {
-                0 => b'A',
-                1 => b'C',
-                2 => b'G',
-                3 => b'T',
-                _ => b'N',
+            let byte = self.data[byte_idx];
+            // Low nibble = even positions, high nibble = odd positions
+            let nibble = if is_odd {
+                (byte >> 4) & 0x0F
+            } else {
+                byte & 0x0F
+            };
+
+            // DRAGEN one-hot encoding: A=1, C=2, G=4, T=8
+            let base = match nibble {
+                1 => b'A',
+                2 => b'C',
+                4 => b'G',
+                8 => b'T',
+                _ => b'N', // 0 or ambiguous
             };
             result.push(base);
         }
