@@ -772,6 +772,9 @@ fn apply_pair_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
 
     fn read_with_len(name: &str, len: usize) -> Read {
         Read {
@@ -796,6 +799,16 @@ mod tests {
             quality: read.quality.clone(),
             score: 100,
         }
+    }
+
+    fn write_fastq(file: &mut NamedTempFile, records: &[(&str, &str, &str)]) {
+        for (name, seq, qual) in records {
+            writeln!(file, "@{name}").unwrap();
+            writeln!(file, "{seq}").unwrap();
+            writeln!(file, "+").unwrap();
+            writeln!(file, "{qual}").unwrap();
+        }
+        file.flush().unwrap();
     }
 
     #[test]
@@ -864,5 +877,69 @@ mod tests {
 
         assert!(aln1.flag & 0x2 == 0);
         assert!(aln2.flag & 0x2 == 0);
+    }
+
+    #[test]
+    fn read_chunk_splits_reads() {
+        let mut fastq = NamedTempFile::new().unwrap();
+        write_fastq(
+            &mut fastq,
+            &[
+                ("r1", "ACGT", "!!!!"),
+                ("r2", "TGCA", "####"),
+                ("r3", "GATT", "$$$$"),
+            ],
+        );
+
+        let mut reader = FastqReader::open(fastq.path()).unwrap();
+        let first = read_chunk(&mut reader, 2).unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].name, "r1");
+        assert_eq!(first[1].name, "r2");
+
+        let second = read_chunk(&mut reader, 2).unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].name, "r3");
+
+        let third = read_chunk(&mut reader, 2).unwrap();
+        assert!(third.is_empty());
+    }
+
+    #[test]
+    fn read_chunk_pairs_preserves_pair_names() {
+        let mut fastq1 = NamedTempFile::new().unwrap();
+        let mut fastq2 = NamedTempFile::new().unwrap();
+
+        write_fastq(
+            &mut fastq1,
+            &[
+                ("pair1/1", "ACGT", "!!!!"),
+                ("pair2/1", "TGCA", "####"),
+                ("pair3/1", "GATT", "$$$$"),
+            ],
+        );
+        write_fastq(
+            &mut fastq2,
+            &[
+                ("pair1/2", "ACGT", "!!!!"),
+                ("pair2/2", "TGCA", "####"),
+                ("pair3/2", "GATT", "$$$$"),
+            ],
+        );
+
+        let mut reader1 = FastqReader::open(fastq1.path()).unwrap();
+        let mut reader2 = FastqReader::open(fastq2.path()).unwrap();
+
+        let first = read_chunk_pairs(&mut reader1, &mut reader2, 2).unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].pair_name, "pair1");
+        assert_eq!(first[1].pair_name, "pair2");
+
+        let second = read_chunk_pairs(&mut reader1, &mut reader2, 2).unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].pair_name, "pair3");
+
+        let third = read_chunk_pairs(&mut reader1, &mut reader2, 2).unwrap();
+        assert!(third.is_empty());
     }
 }
