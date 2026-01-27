@@ -66,13 +66,16 @@ impl SamWriter {
 
         writeln!(
             self.inner,
-            "{}\t{}\t{}\t{}\t{}\t{}\t*\t0\t0\t{}\t{}\tRG:Z:{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\tRG:Z:{}",
             aln.read_name,
             aln.flag,
             aln.ref_name,
             aln.position,
             aln.mapq,
             aln.cigar,
+            aln.mate_ref_name,
+            aln.mate_position,
+            aln.template_length,
             seq_str,
             qual_str,
             rgid

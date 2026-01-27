@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 use narfmap::alignment::Aligner;
 use narfmap::io::{FastqReader, SamWriter};
 use narfmap::reference::{HashTable, ReferenceSequence};
+use narfmap::{Alignment, Read};
 
 // FFI module is only used in main
 mod ffi;
@@ -329,7 +330,7 @@ fn align_reads(
     rgid: &str,
     rgsm: &str,
     _num_threads: usize,
-    _interleaved: bool,
+    interleaved: bool,
     verbose: bool,
 ) -> Result<()> {
     println!("NARFMAP Aligner v{}", env!("CARGO_PKG_VERSION"));
@@ -345,6 +346,9 @@ fn align_reads(
     }
     if !fastq1.exists() {
         bail!("FASTQ file not found: {}", fastq1.display());
+    }
+    if interleaved && fastq2.is_some() {
+        bail!("--interleaved cannot be used with --fastq2");
     }
     if let Some(fq2) = fastq2 {
         if !fq2.exists() {
@@ -383,27 +387,75 @@ fn align_reads(
 
     // Process reads
     println!("Aligning reads...");
-    let mut fastq_reader = FastqReader::open(fastq1)?;
-
     let mut total_reads = 0u64;
     let mut aligned_reads = 0u64;
 
-    for read_result in fastq_reader {
-        let read = read_result?;
-        total_reads += 1;
-
-        let alignment = aligner.align(&read);
-
-        if alignment.flag & 4 == 0 {
-            // Mapped
-            aligned_reads += 1;
+    if interleaved {
+        let mut fastq_reader = FastqReader::open(fastq1)?;
+        loop {
+            let read1 = match fastq_reader.read_record()? {
+                Some(read) => read,
+                None => break,
+            };
+            let read2 = fastq_reader.read_record()?.ok_or_else(|| {
+                anyhow::anyhow!("Interleaved FASTQ missing mate for {}", read1.name)
+            })?;
+            process_pair(
+                &aligner,
+                &mut sam_writer,
+                &read1,
+                &read2,
+                rgid,
+                &mut total_reads,
+                &mut aligned_reads,
+            )?;
         }
+    } else if let Some(fq2) = fastq2 {
+        let mut fastq_reader1 = FastqReader::open(fastq1)?;
+        let mut fastq_reader2 = FastqReader::open(fq2)?;
+        loop {
+            let read1 = fastq_reader1.read_record()?;
+            let read2 = fastq_reader2.read_record()?;
+            match (read1, read2) {
+                (None, None) => break,
+                (Some(_), None) => {
+                    bail!("FASTQ 2 ended before FASTQ 1")
+                }
+                (None, Some(_)) => {
+                    bail!("FASTQ 1 ended before FASTQ 2")
+                }
+                (Some(read1), Some(read2)) => {
+                    process_pair(
+                        &aligner,
+                        &mut sam_writer,
+                        &read1,
+                        &read2,
+                        rgid,
+                        &mut total_reads,
+                        &mut aligned_reads,
+                    )?;
+                }
+            }
+        }
+    } else {
+        let mut fastq_reader = FastqReader::open(fastq1)?;
+        for read_result in fastq_reader {
+            let read = read_result?;
+            total_reads += 1;
 
-        sam_writer.write_alignment(&alignment, rgid)?;
+            let alignment = aligner.align(&read);
 
-        // Progress
-        if total_reads % 10000 == 0 {
-            eprint!("\r  Processed {} reads...", total_reads);
+            if alignment.flag & 4 == 0 {
+                // Mapped
+                aligned_reads += 1;
+            }
+
+            sam_writer.write_alignment(&alignment, rgid)?;
+
+            // Progress
+            if total_reads % 10000 == 0 {
+                eprint!("\r  Processed {} reads...", total_reads);
+            }
         }
     }
 
@@ -424,4 +476,136 @@ fn align_reads(
     println!("  Output: {}", sam_path.display());
 
     Ok(())
+}
+
+fn process_pair(
+    aligner: &Aligner,
+    sam_writer: &mut SamWriter,
+    read1: &Read,
+    read2: &Read,
+    rgid: &str,
+    total_reads: &mut u64,
+    aligned_reads: &mut u64,
+) -> Result<()> {
+    let pair_name = pair_name(read1, read2)?;
+
+    let mut aln1 = aligner.align(read1);
+    let mut aln2 = aligner.align(read2);
+    apply_pair_metadata(&mut aln1, &mut aln2, read1, read2, &pair_name);
+
+    *total_reads += 2;
+    if aln1.flag & 4 == 0 {
+        *aligned_reads += 1;
+    }
+    if aln2.flag & 4 == 0 {
+        *aligned_reads += 1;
+    }
+
+    sam_writer.write_alignment(&aln1, rgid)?;
+    sam_writer.write_alignment(&aln2, rgid)?;
+
+    if *total_reads % 10000 == 0 {
+        eprint!("\r  Processed {} reads...", *total_reads);
+    }
+
+    Ok(())
+}
+
+fn pair_name(read1: &Read, read2: &Read) -> Result<String> {
+    let name1 = normalize_pair_name(&read1.name);
+    let name2 = normalize_pair_name(&read2.name);
+    if name1 != name2 {
+        bail!("FASTQ pair name mismatch: {} vs {}", read1.name, read2.name);
+    }
+    Ok(name1)
+}
+
+fn normalize_pair_name(name: &str) -> String {
+    if let Some(stripped) = name.strip_suffix("/1") {
+        stripped.to_string()
+    } else if let Some(stripped) = name.strip_suffix("/2") {
+        stripped.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+fn apply_pair_metadata(
+    aln1: &mut Alignment,
+    aln2: &mut Alignment,
+    read1: &Read,
+    read2: &Read,
+    pair_name: &str,
+) {
+    let unmapped1 = aln1.flag & 4 != 0;
+    let unmapped2 = aln2.flag & 4 != 0;
+
+    aln1.read_name = pair_name.to_string();
+    aln2.read_name = pair_name.to_string();
+
+    aln1.flag |= 0x1 | 0x40;
+    aln2.flag |= 0x1 | 0x80;
+
+    if unmapped2 {
+        aln1.flag |= 0x8;
+    }
+    if unmapped1 {
+        aln2.flag |= 0x8;
+    }
+
+    if !unmapped2 && (aln2.flag & 0x10 != 0) {
+        aln1.flag |= 0x20;
+    }
+    if !unmapped1 && (aln1.flag & 0x10 != 0) {
+        aln2.flag |= 0x20;
+    }
+
+    if unmapped2 {
+        aln1.mate_ref_name = "*".to_string();
+        aln1.mate_position = 0;
+    } else {
+        aln1.mate_ref_name = if !unmapped1 && aln1.ref_name == aln2.ref_name {
+            "=".to_string()
+        } else {
+            aln2.ref_name.clone()
+        };
+        aln1.mate_position = aln2.position;
+    }
+
+    if unmapped1 {
+        aln2.mate_ref_name = "*".to_string();
+        aln2.mate_position = 0;
+    } else {
+        aln2.mate_ref_name = if !unmapped2 && aln1.ref_name == aln2.ref_name {
+            "=".to_string()
+        } else {
+            aln1.ref_name.clone()
+        };
+        aln2.mate_position = aln1.position;
+    }
+
+    let template_length = if !unmapped1 && !unmapped2 && aln1.ref_name == aln2.ref_name {
+        let start1 = aln1.position;
+        let end1 = aln1.position + read1.sequence.len() as u64 - 1;
+        let start2 = aln2.position;
+        let end2 = aln2.position + read2.sequence.len() as u64 - 1;
+        let left = start1.min(start2);
+        let right = end1.max(end2);
+        right as i64 - left as i64 + 1
+    } else {
+        0
+    };
+
+    if template_length != 0 {
+        if aln1.position <= aln2.position {
+            aln1.template_length = template_length;
+            aln2.template_length = -template_length;
+        } else {
+            aln1.template_length = -template_length;
+            aln2.template_length = template_length;
+        }
+    } else {
+        aln1.template_length = 0;
+        aln2.template_length = 0;
+    }
 }
