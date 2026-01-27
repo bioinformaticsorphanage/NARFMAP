@@ -5,7 +5,6 @@ use std::process::Command;
 use tempfile::tempdir;
 
 #[test]
-#[ignore = "not yet implemented"]
 fn align_cli_emits_sam_for_paired_reads() {
     let fixture = TinyFixture::new();
     fixture.assert_present();
@@ -40,7 +39,6 @@ fn align_cli_emits_sam_for_paired_reads() {
 }
 
 #[test]
-#[ignore = "not yet implemented"]
 fn align_cli_handles_interleaved_fastq() {
     let fixture = TinyFixture::new();
     fixture.assert_present();

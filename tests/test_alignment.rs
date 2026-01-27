@@ -7,7 +7,6 @@ use narfmap::reference::hash_table::HashTable;
 use narfmap::reference::ReferenceSequence;
 
 #[test]
-#[ignore = "not yet implemented"]
 fn aligns_single_read_from_tiny_fastq() {
     let fixture = TinyFixture::new();
     fixture.assert_present();
@@ -24,7 +23,6 @@ fn aligns_single_read_from_tiny_fastq() {
 }
 
 #[test]
-#[ignore = "not yet implemented"]
 fn aligns_interleaved_pairs_from_tiny_fastq() {
     let fixture = TinyFixture::new();
     fixture.assert_present();
