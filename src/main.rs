@@ -656,6 +656,7 @@ impl PairingHeuristic {
     }
 }
 
+#[derive(Debug)]
 struct ReadPair {
     read1: Read,
     read2: Read,
@@ -941,5 +942,93 @@ mod tests {
 
         let third = read_chunk_pairs(&mut reader1, &mut reader2, 2).unwrap();
         assert!(third.is_empty());
+    }
+
+    #[test]
+    fn read_chunk_pairs_interleaved_errors_on_odd_reads() {
+        let mut fastq = NamedTempFile::new().unwrap();
+        write_fastq(
+            &mut fastq,
+            &[
+                ("pair1/1", "ACGT", "!!!!"),
+                ("pair1/2", "TGCA", "####"),
+                ("pair2/1", "GATT", "$$$$"),
+                // Missing pair2/2
+            ],
+        );
+
+        let mut reader = FastqReader::open(fastq.path()).unwrap();
+        let result = read_chunk_pairs_interleaved(&mut reader, 10);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("missing mate"),
+            "expected 'missing mate' in: {err}"
+        );
+    }
+
+    #[test]
+    fn read_chunk_pairs_errors_when_fastq2_shorter() {
+        let mut fastq1 = NamedTempFile::new().unwrap();
+        let mut fastq2 = NamedTempFile::new().unwrap();
+
+        write_fastq(
+            &mut fastq1,
+            &[("pair1/1", "ACGT", "!!!!"), ("pair2/1", "TGCA", "####")],
+        );
+        write_fastq(&mut fastq2, &[("pair1/2", "ACGT", "!!!!")]);
+
+        let mut reader1 = FastqReader::open(fastq1.path()).unwrap();
+        let mut reader2 = FastqReader::open(fastq2.path()).unwrap();
+
+        let result = read_chunk_pairs(&mut reader1, &mut reader2, 10);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("FASTQ 2 ended before FASTQ 1"),
+            "expected 'FASTQ 2 ended before FASTQ 1' in: {err}"
+        );
+    }
+
+    #[test]
+    fn read_chunk_pairs_errors_when_fastq1_shorter() {
+        let mut fastq1 = NamedTempFile::new().unwrap();
+        let mut fastq2 = NamedTempFile::new().unwrap();
+
+        write_fastq(&mut fastq1, &[("pair1/1", "ACGT", "!!!!")]);
+        write_fastq(
+            &mut fastq2,
+            &[("pair1/2", "ACGT", "!!!!"), ("pair2/2", "TGCA", "####")],
+        );
+
+        let mut reader1 = FastqReader::open(fastq1.path()).unwrap();
+        let mut reader2 = FastqReader::open(fastq2.path()).unwrap();
+
+        let result = read_chunk_pairs(&mut reader1, &mut reader2, 10);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("FASTQ 1 ended before FASTQ 2"),
+            "expected 'FASTQ 1 ended before FASTQ 2' in: {err}"
+        );
+    }
+
+    #[test]
+    fn pair_name_errors_on_mismatch() {
+        let read1 = Read {
+            name: "readA/1".to_string(),
+            sequence: vec![b'A'; 10],
+            quality: vec![b'I'; 10],
+        };
+        let read2 = Read {
+            name: "readB/2".to_string(),
+            sequence: vec![b'A'; 10],
+            quality: vec![b'I'; 10],
+        };
+
+        let result = pair_name(&read1, &read2);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mismatch"), "expected 'mismatch' in: {err}");
     }
 }
