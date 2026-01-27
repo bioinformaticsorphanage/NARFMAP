@@ -2220,7 +2220,9 @@ void* hashThreadMultBase(void* arg)
             while (!__sync_bool_compare_and_swap(&bucketLocks[chunkIndex][bucketIndex], 0, 1))
               ;
             THREAD_BUCKET_ADD_REC(chunkIndex, bucketIndex, savedRec[j]);
-#if defined(_TARGET_PPC_)
+#if defined(__aarch64__) || defined(__arm__)
+            __sync_synchronize();
+#elif defined(_TARGET_PPC_)
             //
             // If you run into an issue on x86 where the hash tables don't match when built multiple times
             // likely may happen when we build with more threads per core
@@ -2262,7 +2264,9 @@ void* hashThreadMultBase(void* arg)
     while (!__sync_bool_compare_and_swap(&bucketLocks[chunkIndex][bucketIndex], 0, 1))
       ;
     THREAD_BUCKET_ADD_REC(chunkIndex, bucketIndex, savedRec[j]);
-#if defined(_TARGET_PPC_)
+#if defined(__aarch64__) || defined(__arm__)
+    __sync_synchronize();
+#elif defined(_TARGET_PPC_)
     __asm__ __volatile__("sync" ::: "memory");
 #endif
     __atomic_clear(&bucketLocks[chunkIndex][bucketIndex], __ATOMIC_SEQ_CST);
@@ -2384,7 +2388,9 @@ void* hashThread(void* arg)
           while (!__sync_bool_compare_and_swap(&bucketLocks[chunkIndex][bucketIndex], 0, 1))
             ;
           THREAD_BUCKET_ADD_REC(chunkIndex, bucketIndex, savedRec[j]);
-#if defined(_TARGET_PPC_)
+#if defined(__aarch64__) || defined(__arm__)
+          __sync_synchronize();
+#elif defined(_TARGET_PPC_)
           //
           // If you run into an issue on x86 where the hash tables don't match when built multiple times
           // likely may happen when we build with more threads per core
@@ -2415,7 +2421,9 @@ void* hashThread(void* arg)
     while (!__sync_bool_compare_and_swap(&bucketLocks[chunkIndex][bucketIndex], 0, 1))
       ;
     THREAD_BUCKET_ADD_REC(chunkIndex, bucketIndex, savedRec[j]);
-#if defined(_TARGET_PPC_)
+#if defined(__aarch64__) || defined(__arm__)
+    __sync_synchronize();
+#elif defined(_TARGET_PPC_)
     __asm__ __volatile__("sync" ::: "memory");
 #endif
     __atomic_clear(&bucketLocks[chunkIndex][bucketIndex], __ATOMIC_SEQ_CST);

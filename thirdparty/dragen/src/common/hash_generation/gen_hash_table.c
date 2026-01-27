@@ -574,8 +574,10 @@ void* strScanThreadMultBase(void* ctxPtr)
                 ctx->extendedSeeds += extIncBy;
               }
             }
-            // Release the lock
-#if defined(_TARGET_PPC_)
+            // Release the lock - memory barrier before releasing spinlock
+#if defined(__aarch64__) || defined(__arm__)
+            __sync_synchronize();
+#elif defined(_TARGET_PPC_)
             __asm__ __volatile__("sync" ::: "memory");
 #endif
             *lockPtr = 0;
@@ -751,8 +753,10 @@ void* strScanThread(void* ctxPtr)
           else {
             ctx->extendedSeeds++;
           }
-          // Release the lock
-#if defined(_TARGET_PPC_)
+          // Release the lock - memory barrier before releasing spinlock
+#if defined(__aarch64__) || defined(__arm__)
+          __sync_synchronize();
+#elif defined(_TARGET_PPC_)
           __asm__ __volatile__("sync" ::: "memory");
 #endif
           *lockPtr = 0;

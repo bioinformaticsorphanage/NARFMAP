@@ -1,11 +1,40 @@
 [package]
 name = "narfmap"
 version = "1.4.2"
-edition = "2018"
+edition = "2021"
+description = "DRAGEN-OS mapper/aligner - Rust rewrite"
+license = "GPL-3.0"
 
 [dependencies]
-clap = { version = "4.4.11", features = ["derive"] }
-cxx = "1.0"
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Bioinformatics
+bio = "2.0"
+noodles = { version = "0.88", features = ["fastq", "fasta", "sam", "bgzf", "core"] }
+
+# Async for noodles
+tokio = { version = "1", features = ["rt", "fs", "io-util"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Parallelism
+rayon = "1.10"
+
+# Serialization (for hash table config)
+byteorder = "1.5"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Progress bars
+indicatif = "0.17"
+
+# Compression
+flate2 = "1.0"
 
 [build-dependencies]
-miette = { version = "5", features = ["fancy"] } # optional but gives nicer error messages!
+cc = "1.2"
