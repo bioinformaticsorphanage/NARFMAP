@@ -205,7 +205,10 @@ fn build_hash_table(
     alt_liftover: Option<&std::path::Path>,
     verbose: bool,
 ) -> Result<()> {
-    use ffi::hash_gen::*;
+    use ffi::hash_gen::{
+        free_hash_params, generate_hash_table, set_default_hash_params, strdup, HashTableConfig,
+        HashTableHeader, HashTableType,
+    };
 
     println!("NARFMAP Hash Table Builder v{}", env!("CARGO_PKG_VERSION"));
     println!("Building hash table from: {}", reference.display());
@@ -229,6 +232,8 @@ fn build_hash_table(
     let ref_cstr = path_to_cstring(&reference)?;
     let output_cstr = path_to_cstring(&output_dir)?;
 
+    // SAFETY: FFI calls to C hash table generation library
+    #[allow(unsafe_code)]
     unsafe {
         // Allocate and initialize config
         let mut config: HashTableConfig = std::mem::zeroed();
@@ -294,7 +299,7 @@ fn build_hash_table(
             // Free resources
             free_hash_params(&mut config);
             drop(Box::from_raw(hdr));
-            bail!("Hash table generation failed: {}", err_str);
+            bail!("Hash table generation failed: {err_str}");
         }
 
         // Cleanup
@@ -372,7 +377,7 @@ fn align_reads(
 
     // Determine output path
     let out_dir = output_dir.unwrap_or(std::path::Path::new("."));
-    let sam_path = out_dir.join(format!("{}.sam", output_prefix));
+    let sam_path = out_dir.join(format!("{output_prefix}.sam"));
 
     // Create output directory if needed
     if let Some(parent) = sam_path.parent() {
@@ -456,12 +461,12 @@ fn align_reads(
 
             // Progress
             if total_reads % 10000 == 0 {
-                eprint!("\r  Processed {} reads...", total_reads);
+                eprint!("\r  Processed {total_reads} reads...");
             }
         }
     }
 
-    eprintln!("\r  Processed {} reads    ", total_reads);
+    eprintln!("\r  Processed {total_reads} reads    ");
 
     sam_writer.finish()?;
 
@@ -473,8 +478,8 @@ fn align_reads(
     };
 
     println!("\nAlignment complete!");
-    println!("  Total reads:   {}", total_reads);
-    println!("  Aligned reads: {} ({:.1}%)", aligned_reads, align_rate);
+    println!("  Total reads:   {total_reads}");
+    println!("  Aligned reads: {aligned_reads} ({align_rate:.1}%)");
     println!("  Output: {}", sam_path.display());
 
     Ok(())

@@ -40,7 +40,7 @@ impl SamWriter {
         }
 
         // @RG read group
-        writeln!(self.inner, "@RG\tID:{}\tSM:{}", rgid, rgsm)?;
+        writeln!(self.inner, "@RG\tID:{rgid}\tSM:{rgsm}")?;
 
         // @PG program
         writeln!(

@@ -237,7 +237,7 @@ impl HashTable {
 
     /// Encode a DNA sequence as packed 2-bit representation (A=0, C=1, G=2, T=3)
     /// Returns None if sequence contains N or invalid characters
-    fn encode_seed(&self, seed: &[u8]) -> Option<u64> {
+    fn encode_seed(seed: &[u8]) -> Option<u64> {
         let mut packed: u64 = 0;
         for (i, &base) in seed.iter().enumerate() {
             let bits = match base {
@@ -254,7 +254,7 @@ impl HashTable {
     }
 
     /// Compute reverse complement of a packed seed
-    fn rev_comp(&self, seed: u64, len: usize) -> u64 {
+    fn rev_comp(seed: u64, len: usize) -> u64 {
         let mut result: u64 = 0;
         for i in 0..len {
             let base = (seed >> (i * 2)) & 3;
@@ -267,8 +267,8 @@ impl HashTable {
     }
 
     /// Get canonical seed (minimum of forward and reverse complement)
-    fn canonical_seed(&self, seed: u64, len: usize) -> u64 {
-        let rc = self.rev_comp(seed, len);
+    fn canonical_seed(seed: u64, len: usize) -> u64 {
+        let rc = Self::rev_comp(seed, len);
         seed.min(rc)
     }
 
@@ -306,19 +306,19 @@ impl HashTable {
         }
 
         // Encode seed
-        let Some(packed) = self.encode_seed(seed) else {
+        let Some(packed) = Self::encode_seed(seed) else {
             return Vec::new(); // Contains N
         };
 
         // Get canonical form
-        let canonical = self.canonical_seed(packed, seed_len);
+        let canonical = Self::canonical_seed(packed, seed_len);
 
         // Compute primary hash
         let pri_hash = self.pri_crc.hash(canonical);
 
         // Compute secondary hash for verification
         let sec_hash = self.sec_crc.hash(canonical);
-        let expected_hash_bits = (sec_hash & 0x7FFFFF) as u32; // 23 bits
+        let expected_hash_bits = (sec_hash & 0x007F_FFFF) as u32; // 23 bits
 
         // Get bucket
         let bucket_idx = self.compute_bucket_index(pri_hash);
@@ -326,13 +326,9 @@ impl HashTable {
 
         if debug {
             let seed_str = String::from_utf8_lossy(seed);
+            eprintln!("DEBUG: seed={seed_str} packed=0x{packed:016x} canonical=0x{canonical:016x}");
             eprintln!(
-                "DEBUG: seed={} packed=0x{:016x} canonical=0x{:016x}",
-                seed_str, packed, canonical
-            );
-            eprintln!(
-                "DEBUG: pri_hash=0x{:016x} sec_hash=0x{:016x} expected_hash_bits=0x{:06x}",
-                pri_hash, sec_hash, expected_hash_bits
+                "DEBUG: pri_hash=0x{pri_hash:016x} sec_hash=0x{sec_hash:016x} expected_hash_bits=0x{expected_hash_bits:06x}"
             );
             eprintln!(
                 "DEBUG: bucket_idx={} bucket_offset=0x{:x} table_size={}",
@@ -356,16 +352,16 @@ impl HashTable {
                     u64::from_le_bytes(bucket_data[off..off + 8].try_into().unwrap_or([0; 8]));
                 let is_hit = (rec & HASHREC_HIT_MASK) == 0;
                 if is_hit {
-                    let hbits = ((rec >> 35) & 0x7FFFFF) as u32;
+                    let hbits = ((rec >> 35) & 0x007F_FFFF) as u32;
                     eprintln!(
                         "  [{}] 0x{:016x} HIT pos={} hash_bits=0x{:06x}",
                         i,
                         rec,
-                        rec & 0xFFFFFFFF,
+                        rec & 0xFFFF_FFFF,
                         hbits
                     );
                 } else {
-                    eprintln!("  [{}] 0x{:016x} (not a hit)", i, rec);
+                    eprintln!("  [{i}] 0x{rec:016x} (not a hit)");
                 }
             }
         }
@@ -396,14 +392,13 @@ impl HashTable {
             // bits 58-63: thread_id (6 bits)
             let pos = (record & 0xFFFF_FFFF) as u32;
             let is_reverse = (record >> 32) & 1 != 0;
-            let hash_bits = ((record >> 35) & 0x7FFFFF) as u32;
+            let hash_bits = ((record >> 35) & 0x007F_FFFF) as u32;
 
             // Verify secondary hash matches
             if hash_bits != expected_hash_bits {
                 if debug {
                     eprintln!(
-                        "DEBUG: hash_bits mismatch: got 0x{:06x} expected 0x{:06x}",
-                        hash_bits, expected_hash_bits
+                        "DEBUG: hash_bits mismatch: got 0x{hash_bits:06x} expected 0x{expected_hash_bits:06x}"
                     );
                 }
                 continue;
@@ -432,7 +427,7 @@ mod tests {
     #[test]
     fn test_crc64_init() {
         // Test CRC64 table initialization
-        let crc = Crc64Init::new(36, 0x91A88EDCB);
+        let crc = Crc64Init::new(36, 0x0009_1A88_EDCB);
         assert_eq!(crc.tables.len(), 5); // ceil(36/8) = 5 bytes
     }
 
@@ -440,7 +435,7 @@ mod tests {
     fn test_seed_encoding() {
         let config = HashTableConfig {
             version: 8,
-            hash_table_bytes: 131072,
+            hash_table_bytes: 131_072,
             pri_seed_bases: 4,
             max_seed_bases: 4,
             ref_seed_interval: 1.0,
@@ -450,45 +445,47 @@ mod tests {
             sec_crc_bits: 36,
             ref_seq_len: 1000,
             num_ref_seqs: 1,
-            pri_crc_poly: 0x91A88EDCB,
-            sec_crc_poly: 0x91A88EDCB,
+            pri_crc_poly: 0x0009_1A88_EDCB,
+            sec_crc_poly: 0x0009_1A88_EDCB,
             table_size_64ths: 64,
         };
 
-        let pri_crc = Crc64Init::new(36, 0x91A88EDCB);
-        let sec_crc = Crc64Init::new(36, 0x91A88EDCB);
+        let pri_crc = Crc64Init::new(36, 0x0009_1A88_EDCB);
+        let sec_crc = Crc64Init::new(36, 0x0009_1A88_EDCB);
 
         let ht = HashTable {
             config,
-            data: vec![0; 131072],
+            data: vec![0; 131_072],
             pri_crc,
             sec_crc,
         };
 
         // Test ACGT encoding: A=0, C=1, G=2, T=3
         // LSB-first: A at bits 0-1, C at bits 2-3, G at bits 4-5, T at bits 6-7
-        let encoded = ht.encode_seed(b"ACGT").unwrap();
+        let encoded = HashTable::encode_seed(b"ACGT").unwrap();
         assert_eq!(encoded, 0b11_10_01_00); // T=3, G=2, C=1, A=0 from MSB to LSB
 
         // Test rev_comp: ACGT -> ACGT (palindrome)
-        let rc = ht.rev_comp(encoded, 4);
+        let rc = HashTable::rev_comp(encoded, 4);
         // Original: A C G T (pos 0-3)
         // RevComp:  A C G T (complement of reverse)
         // Reverse of ACGT is TGCA, complement is ACGT
         assert_eq!(rc, encoded);
 
         // Test non-palindrome: AAAA -> TTTT
-        let aaaa = ht.encode_seed(b"AAAA").unwrap();
+        let aaaa = HashTable::encode_seed(b"AAAA").unwrap();
         assert_eq!(aaaa, 0b00_00_00_00);
-        let tttt = ht.rev_comp(aaaa, 4);
+        let tttt = HashTable::rev_comp(aaaa, 4);
         assert_eq!(tttt, 0b11_11_11_11);
+
+        let _ = ht; // silence unused warning
     }
 
     #[test]
     fn test_canonical_seed() {
         let config = HashTableConfig {
             version: 8,
-            hash_table_bytes: 131072,
+            hash_table_bytes: 131_072,
             pri_seed_bases: 4,
             max_seed_bases: 4,
             ref_seed_interval: 1.0,
@@ -498,24 +495,28 @@ mod tests {
             sec_crc_bits: 36,
             ref_seq_len: 1000,
             num_ref_seqs: 1,
-            pri_crc_poly: 0x91A88EDCB,
-            sec_crc_poly: 0x91A88EDCB,
+            pri_crc_poly: 0x0009_1A88_EDCB,
+            sec_crc_poly: 0x0009_1A88_EDCB,
             table_size_64ths: 64,
         };
 
-        let pri_crc = Crc64Init::new(36, 0x91A88EDCB);
-        let sec_crc = Crc64Init::new(36, 0x91A88EDCB);
+        let pri_crc = Crc64Init::new(36, 0x0009_1A88_EDCB);
+        let sec_crc = Crc64Init::new(36, 0x0009_1A88_EDCB);
 
         let ht = HashTable {
             config,
-            data: vec![0; 131072],
+            data: vec![0; 131_072],
             pri_crc,
             sec_crc,
         };
 
         // AAAA (0x00) and TTTT (0xFF) should have same canonical form
-        let aaaa = ht.encode_seed(b"AAAA").unwrap();
-        let tttt = ht.encode_seed(b"TTTT").unwrap();
-        assert_eq!(ht.canonical_seed(aaaa, 4), ht.canonical_seed(tttt, 4));
+        let aaaa = HashTable::encode_seed(b"AAAA").unwrap();
+        let tttt = HashTable::encode_seed(b"TTTT").unwrap();
+        assert_eq!(
+            HashTable::canonical_seed(aaaa, 4),
+            HashTable::canonical_seed(tttt, 4)
+        );
+        let _ = ht; // silence unused warning
     }
 }

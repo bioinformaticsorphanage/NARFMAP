@@ -36,7 +36,7 @@ fn main() {
 
     // Include paths
     let includes: Vec<PathBuf> = vec![
-        hash_gen_dir.clone(),
+        hash_gen_dir,
         infra_dir.join("public"),
         infra_dir.join("crypto"),
         dragen_src.join("common/public"),
@@ -49,7 +49,7 @@ fn main() {
 
     for src in hash_gen_sources.iter().chain(crc_sources.iter()) {
         let obj_name = src.file_stem().unwrap().to_str().unwrap();
-        let obj_path = out_path.join(format!("{}.o", obj_name));
+        let obj_path = out_path.join(format!("{obj_name}.o"));
 
         let mut cmd = Command::new("clang");
         cmd.arg("-c")
@@ -72,9 +72,7 @@ fn main() {
         let status = cmd
             .status()
             .unwrap_or_else(|_| panic!("Failed to compile {}", src.display()));
-        if !status.success() {
-            panic!("Compilation failed for {}", src.display());
-        }
+        assert!(status.success(), "Compilation failed for {}", src.display());
 
         objects.push(obj_path);
     }
@@ -90,9 +88,7 @@ fn main() {
             cmd.arg(obj);
         }
         let status = cmd.status().expect("Failed to run libtool");
-        if !status.success() {
-            panic!("libtool failed");
-        }
+        assert!(status.success(), "libtool failed")
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -109,7 +105,7 @@ fn main() {
     }
 
     // Tell cargo to link against our library
-    println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:rustc-link-search=native={out_dir}");
     println!("cargo:rustc-link-lib=static=dragen_hash_gen");
 
     // Link against zlib (required for compression)

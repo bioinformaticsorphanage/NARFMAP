@@ -2,6 +2,8 @@
 //!
 //! Based on gen_hash_table.h from thirdparty/dragen
 
+#![allow(unsafe_code)] // FFI module requires unsafe
+
 use std::os::raw::{c_char, c_double, c_int};
 
 /// Hash table type for generation
@@ -165,7 +167,7 @@ pub unsafe fn set_default_hash_params(
     dir: *const c_char,
     hash_table_type: HashTableType,
 ) {
-    setDefaultHashParams(config as *mut _, dir, hash_table_type);
+    setDefaultHashParams(std::ptr::from_mut(config), dir, hash_table_type);
 }
 
 /// Safe wrapper for generateHashTable
@@ -178,7 +180,7 @@ pub unsafe fn generate_hash_table(
     argc: c_int,
     argv: *mut *mut c_char,
 ) -> *mut c_char {
-    generateHashTable(config as *mut _, argc, argv)
+    generateHashTable(std::ptr::from_mut(config), argc, argv)
 }
 
 /// Safe wrapper for freeHashParams
@@ -186,5 +188,5 @@ pub unsafe fn generate_hash_table(
 /// # Safety
 /// - `config` must be a valid mutable reference to previously initialized HashTableConfig
 pub unsafe fn free_hash_params(config: &mut HashTableConfig) {
-    freeHashParams(config as *mut _);
+    freeHashParams(std::ptr::from_mut(config));
 }

@@ -98,7 +98,7 @@ impl<'a> Aligner<'a> {
         }
 
         // Build CIGAR string
-        let cigar = self.build_cigar(&alignment.operations);
+        let cigar = Self::build_cigar(&alignment.operations);
 
         // Calculate mapping quality (simplified)
         let mapq = self.calculate_mapq(alignment.score, read.sequence.len());
@@ -136,7 +136,9 @@ impl<'a> Aligner<'a> {
     }
 
     /// Build CIGAR string from alignment operations
-    fn build_cigar(&self, ops: &[AlignmentOperation]) -> String {
+    fn build_cigar(ops: &[AlignmentOperation]) -> String {
+        use std::fmt::Write;
+
         if ops.is_empty() {
             return "*".to_string();
         }
@@ -147,8 +149,7 @@ impl<'a> Aligner<'a> {
 
         for op in ops {
             let op_char = match op {
-                AlignmentOperation::Match => 'M',
-                AlignmentOperation::Subst => 'M', // Treat substitution as M (not X)
+                AlignmentOperation::Match | AlignmentOperation::Subst => 'M',
                 AlignmentOperation::Ins => 'I',
                 AlignmentOperation::Del => 'D',
                 AlignmentOperation::Xclip(_) => 'S', // Soft clip
@@ -159,7 +160,7 @@ impl<'a> Aligner<'a> {
                 count += 1;
             } else {
                 if let Some(prev_op) = current_op {
-                    cigar.push_str(&format!("{}{}", count, prev_op));
+                    let _ = write!(cigar, "{count}{prev_op}");
                 }
                 current_op = Some(op_char);
                 count = 1;
@@ -167,7 +168,7 @@ impl<'a> Aligner<'a> {
         }
 
         if let Some(op) = current_op {
-            cigar.push_str(&format!("{}{}", count, op));
+            let _ = write!(cigar, "{count}{op}");
         }
 
         if cigar.is_empty() {
