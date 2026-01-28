@@ -17,6 +17,26 @@ const HASH_RECORDS_PER_BUCKET: usize = 8;
 /// Mask to detect valid hit records: (record & HASHREC_HIT_MASK) == 0 means valid hit
 const HASHREC_HIT_MASK: u64 = 0x8000_0000_F000_0000;
 
+// Record type opcodes (when bits [31:28] == 0xF, bits [27:24] give opcode)
+#[allow(dead_code)]
+const OPCODE_EMPTY: u8 = 0x0;
+#[allow(dead_code)]
+const OPCODE_HIFREQ: u8 = 0x1;
+#[allow(dead_code)]
+const OPCODE_EXTEND: u8 = 0x2;
+#[allow(dead_code)]
+const OPCODE_CHAIN_BEG_MASK: u8 = 0x4;
+#[allow(dead_code)]
+const OPCODE_CHAIN_BEG_LIST: u8 = 0x5;
+#[allow(dead_code)]
+const OPCODE_CHAIN_CON_MASK: u8 = 0x6;
+#[allow(dead_code)]
+const OPCODE_CHAIN_CON_LIST: u8 = 0x7;
+const OPCODE_INTERVAL_SL: u8 = 0x8;
+const OPCODE_INTERVAL_SLE: u8 = 0x9;
+const OPCODE_INTERVAL_S: u8 = 0xA;
+const OPCODE_INTERVAL_L: u8 = 0xB;
+
 /// Sequence metadata for position-to-coordinate conversion
 #[derive(Debug, Clone)]
 pub struct HashTableSequence {
@@ -333,6 +353,53 @@ impl HashTable {
         (value >> start) & ((1u64 << count) - 1)
     }
 
+    /// Get record type opcode from a hash record
+    /// Returns None for HIT records, Some(opcode) for special records
+    fn get_opcode(record: u64) -> Option<u8> {
+        // If bits [31:28] != 0xF, it's a HIT record
+        if (record >> 28) & 0xF != 0xF {
+            return None;
+        }
+        // Otherwise, bits [27:24] give the opcode
+        Some(((record >> 24) & 0xF) as u8)
+    }
+
+    /// Decode an INTERVAL_SL0 record (opcode 0x8 with bit 32 = 0)
+    /// Returns (start, length, is_reverse, hash_bits)
+    fn decode_interval_sl0(record: u64) -> (u64, u64, bool, u32) {
+        let start = record & 0x7FFF; // bits [14:0]
+        let length = (record >> 15) & 0x1FF; // bits [23:15] = 9 bits
+        let is_reverse = (record >> 32) & 1 != 0;
+        let hash_bits = ((record >> 35) & 0x007F_FFFF) as u32;
+        (start, length + 1, is_reverse, hash_bits)
+    }
+
+    /// Decode an INTERVAL_SL1 record (opcode 0x8 with bit 32 = 1)
+    /// Returns partial (start_high, length, is_reverse, hash_bits)
+    /// Needs following INTERVAL_S record for full start
+    fn decode_interval_sl1(record: u64) -> (u64, u64, bool, u32) {
+        let start_high = (record & 0xFF) << 24; // bits [7:0] -> bits [31:24] of start
+        let length = (record >> 8) & 0xFFFF; // bits [23:8] = 16 bits
+        let is_reverse = (record >> 32) & 1 != 0;
+        let hash_bits = ((record >> 35) & 0x007F_FFFF) as u32;
+        (start_high, length + 1, is_reverse, hash_bits)
+    }
+
+    /// Decode an INTERVAL_S record (opcode 0xA)
+    /// Returns (start_low, has_carry)
+    fn decode_interval_s(record: u64) -> (u64, bool) {
+        let start_low = record & 0xFF_FFFF; // bits [23:0]
+        let has_carry = (record >> 32) & 1 != 0; // bit 32
+        (start_low, has_carry)
+    }
+
+    /// Decode an INTERVAL_L record (opcode 0xB)
+    /// Returns length
+    #[allow(dead_code)]
+    fn decode_interval_l(record: u64) -> u64 {
+        (record & 0xFF_FFFF) + 1 // bits [23:0], +1 for actual length
+    }
+
     /// Compute bucket index from hash
     fn compute_bucket_index(&self, hash: u64) -> usize {
         let addr_bits = self.config.table_addr_bits;
@@ -424,8 +491,10 @@ impl HashTable {
 
         // Parse hash records from bucket
         let mut positions = Vec::new();
+        let max_results = self.config.max_seed_freq as usize;
 
-        for i in 0..HASH_RECORDS_PER_BUCKET {
+        let mut i = 0;
+        while i < HASH_RECORDS_PER_BUCKET && positions.len() < max_results {
             let record_offset = i * 8;
             let record = u64::from_le_bytes(
                 bucket_data[record_offset..record_offset + 8]
@@ -433,48 +502,137 @@ impl HashTable {
                     .unwrap_or([0; 8]),
             );
 
-            // Check for valid hit record using DRAGEN's mask
-            // (record & 0x80000000F0000000) == 0 means valid hit
-            if (record & HASHREC_HIT_MASK) != 0 {
-                continue;
-            }
+            match Self::get_opcode(record) {
+                None => {
+                    // HIT record - direct position
+                    let pos = (record & 0xFFFF_FFFF) as u32;
+                    let is_reverse = (record >> 32) & 1 != 0;
+                    let hash_bits = ((record >> 35) & 0x007F_FFFF) as u32;
 
-            // Extract fields from hashrec_hit_t:
-            // bits 0-31: position (32 bits)
-            // bit 32: rc (reverse complement)
-            // bit 33: lf (left flank)
-            // bit 34: ex (extended)
-            // bits 35-57: hash_bits (23 bits) - secondary CRC verification
-            // bits 58-63: thread_id (6 bits)
-            let pos = (record & 0xFFFF_FFFF) as u32;
-            let is_reverse = (record >> 32) & 1 != 0;
-            let hash_bits = ((record >> 35) & 0x007F_FFFF) as u32;
-
-            // Verify secondary hash matches
-            if hash_bits != expected_hash_bits {
-                if debug {
-                    eprintln!(
-                        "DEBUG: hash_bits mismatch: got 0x{hash_bits:06x} expected 0x{expected_hash_bits:06x}"
-                    );
+                    if hash_bits == expected_hash_bits {
+                        positions.push(RefPosition {
+                            seq_id: 0,
+                            offset: pos as u64,
+                            is_reverse,
+                        });
+                    } else if debug {
+                        eprintln!(
+                            "DEBUG: HIT hash_bits mismatch: got 0x{hash_bits:06x} expected 0x{expected_hash_bits:06x}"
+                        );
+                    }
                 }
-                continue;
+                Some(OPCODE_INTERVAL_SL) => {
+                    // INTERVAL_SL0 or INTERVAL_SL1
+                    let is_sl1 = (record >> 32) & 1 != 0;
+                    if is_sl1 {
+                        // INTERVAL_SL1 - needs next record for start
+                        let (start_high, length, is_reverse, hash_bits) =
+                            Self::decode_interval_sl1(record);
+                        if hash_bits == expected_hash_bits && i + 1 < HASH_RECORDS_PER_BUCKET {
+                            i += 1;
+                            let next_record = u64::from_le_bytes(
+                                bucket_data[(i * 8)..(i * 8 + 8)]
+                                    .try_into()
+                                    .unwrap_or([0; 8]),
+                            );
+                            if Self::get_opcode(next_record) == Some(OPCODE_INTERVAL_S) {
+                                let (start_low, has_carry) = Self::decode_interval_s(next_record);
+                                let start = start_low
+                                    + start_high
+                                    + if has_carry { 0x0100_0000 } else { 0 };
+                                Self::add_interval_positions(
+                                    &mut positions,
+                                    start,
+                                    length,
+                                    is_reverse,
+                                    max_results,
+                                );
+                            }
+                        }
+                    } else {
+                        // INTERVAL_SL0 - self-contained
+                        let (start, length, is_reverse, hash_bits) =
+                            Self::decode_interval_sl0(record);
+                        if hash_bits == expected_hash_bits {
+                            Self::add_interval_positions(
+                                &mut positions,
+                                start,
+                                length,
+                                is_reverse,
+                                max_results,
+                            );
+                        }
+                    }
+                }
+                Some(OPCODE_INTERVAL_SLE) => {
+                    // INTERVAL_SLE - complex encoding, skip for now
+                    // TODO: implement full INTERVAL_SLE decoding
+                    if debug {
+                        eprintln!("DEBUG: skipping INTERVAL_SLE record");
+                    }
+                }
+                Some(OPCODE_INTERVAL_S) | Some(OPCODE_INTERVAL_L) => {
+                    // These should be consumed by preceding records
+                    if debug {
+                        eprintln!("DEBUG: orphan INTERVAL_S/L record");
+                    }
+                }
+                Some(opcode)
+                    if (OPCODE_CHAIN_BEG_MASK..=OPCODE_CHAIN_CON_LIST).contains(&opcode) =>
+                {
+                    // CHAIN records - skip for now
+                    // TODO: implement chain pointer following
+                    if debug {
+                        eprintln!("DEBUG: skipping CHAIN record (opcode {opcode:#x})");
+                    }
+                }
+                Some(OPCODE_EXTEND) => {
+                    // EXTEND record - skip for now
+                    // TODO: implement extension table lookup
+                    if debug {
+                        eprintln!("DEBUG: skipping EXTEND record");
+                    }
+                }
+                Some(OPCODE_HIFREQ) => {
+                    // HIFREQ record - just indicates high frequency, skip
+                    if debug {
+                        eprintln!("DEBUG: skipping HIFREQ record");
+                    }
+                }
+                Some(OPCODE_EMPTY) => {
+                    // Empty slot
+                }
+                Some(opcode) => {
+                    if debug {
+                        eprintln!("DEBUG: unknown opcode {opcode:#x}");
+                    }
+                }
             }
 
-            // TODO: implement proper seq_id decoding once sequence metadata parsing is complete
-            // For now, assume single sequence (seq_id=0) which works for most use cases
-            positions.push(RefPosition {
-                seq_id: 0,
-                offset: pos as u64,
-                is_reverse,
-            });
-
-            // Limit results
-            if positions.len() >= self.config.max_seed_freq as usize {
-                break;
-            }
+            i += 1;
         }
 
         positions
+    }
+
+    /// Add positions from an interval range
+    fn add_interval_positions(
+        positions: &mut Vec<RefPosition>,
+        start: u64,
+        length: u64,
+        is_reverse: bool,
+        max_results: usize,
+    ) {
+        for offset in 0..length {
+            if positions.len() >= max_results {
+                break;
+            }
+            positions.push(RefPosition {
+                seq_id: 0,
+                offset: start + offset,
+                is_reverse,
+            });
+        }
     }
 }
 
