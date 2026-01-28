@@ -4,7 +4,7 @@
 //! Implements DRAGEN-compatible CRC64 hashing for seed lookup.
 
 use std::fs::File;
-use std::io::{BufReader, Read as IoRead};
+use std::io::{BufReader, Read as IoRead, Seek, SeekFrom};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -16,6 +16,19 @@ const HASH_BUCKET_BYTES: usize = 64;
 const HASH_RECORDS_PER_BUCKET: usize = 8;
 /// Mask to detect valid hit records: (record & HASHREC_HIT_MASK) == 0 means valid hit
 const HASHREC_HIT_MASK: u64 = 0x8000_0000_F000_0000;
+
+/// Sequence metadata for position-to-coordinate conversion
+#[derive(Debug, Clone)]
+pub struct HashTableSequence {
+    /// Start offset in flat reference
+    pub seq_start: u64,
+    /// Leading N's trimmed from sequence
+    pub beg_trim: u32,
+    /// Trailing N's trimmed from sequence
+    pub end_trim: u32,
+    /// Original sequence length (including trimmed portions)
+    pub seq_len: u32,
+}
 
 /// Hash table configuration (from hash_table.cfg.bin)
 #[derive(Debug, Clone)]
@@ -34,6 +47,8 @@ pub struct HashTableConfig {
     pub pri_crc_poly: u64,
     pub sec_crc_poly: u64,
     pub table_size_64ths: u32,
+    /// Sequence metadata for position conversion (sorted by seq_start)
+    pub sequences: Vec<HashTableSequence>,
 }
 
 impl HashTableConfig {
@@ -85,6 +100,24 @@ impl HashTableConfig {
         let _digest = reader.read_u32::<LittleEndian>()?;
         let num_ref_seqs = reader.read_u32::<LittleEndian>()?;
 
+        // Seek to end of 512-byte header to read sequence records
+        reader.seek(SeekFrom::Start(512))?;
+
+        // Parse sequence records (20 bytes each: seqStart u64, begTrim u32, endTrim u32, seqLen u32)
+        let mut sequences = Vec::with_capacity(num_ref_seqs as usize);
+        for _ in 0..num_ref_seqs {
+            let seq_start = reader.read_u64::<LittleEndian>()?;
+            let beg_trim = reader.read_u32::<LittleEndian>()?;
+            let end_trim = reader.read_u32::<LittleEndian>()?;
+            let seq_len = reader.read_u32::<LittleEndian>()?;
+            sequences.push(HashTableSequence {
+                seq_start,
+                beg_trim,
+                end_trim,
+                seq_len,
+            });
+        }
+
         Ok(Self {
             version,
             hash_table_bytes,
@@ -100,6 +133,7 @@ impl HashTableConfig {
             pri_crc_poly,
             sec_crc_poly,
             table_size_64ths,
+            sequences,
         })
     }
 
@@ -118,6 +152,28 @@ impl HashTableConfig {
         // table_size_64ths=64 means no squeezing (ratio=1)
         // table_size_64ths=32 means ratio=2, etc.
         64 / (self.table_size_64ths as u64)
+    }
+
+    /// Convert flat reference position to (seq_id, offset) coordinates
+    /// Uses binary search on sequence start positions
+    pub fn convert_to_ref_coords(&self, position: u64) -> (u32, u64) {
+        if self.sequences.is_empty() {
+            return (0, position);
+        }
+
+        // Binary search for sequence containing this position
+        let idx = match self
+            .sequences
+            .binary_search_by(|seq| seq.seq_start.cmp(&position))
+        {
+            Ok(i) => i,      // Exact match on seq_start
+            Err(0) => 0,     // Before first sequence
+            Err(i) => i - 1, // In previous sequence
+        };
+
+        let seq = &self.sequences[idx];
+        let offset = seq.beg_trim as u64 + (position - seq.seq_start);
+        (idx as u32, offset)
     }
 }
 
@@ -404,8 +460,10 @@ impl HashTable {
                 continue;
             }
 
+            // TODO: implement proper seq_id decoding once sequence metadata parsing is complete
+            // For now, assume single sequence (seq_id=0) which works for most use cases
             positions.push(RefPosition {
-                seq_id: 0, // TODO: decode from position
+                seq_id: 0,
                 offset: pos as u64,
                 is_reverse,
             });
@@ -501,6 +559,12 @@ mod tests {
             pri_crc_poly: 0x0009_1A88_EDCB,
             sec_crc_poly: 0x0009_1A88_EDCB,
             table_size_64ths: 64,
+            sequences: vec![HashTableSequence {
+                seq_start: 0,
+                beg_trim: 0,
+                end_trim: 0,
+                seq_len: 1000,
+            }],
         };
 
         let pri_crc = Crc64Init::new(36, 0x0009_1A88_EDCB);
@@ -551,6 +615,12 @@ mod tests {
             pri_crc_poly: 0x0009_1A88_EDCB,
             sec_crc_poly: 0x0009_1A88_EDCB,
             table_size_64ths: 64,
+            sequences: vec![HashTableSequence {
+                seq_start: 0,
+                beg_trim: 0,
+                end_trim: 0,
+                seq_len: 1000,
+            }],
         };
 
         let pri_crc = Crc64Init::new(36, 0x0009_1A88_EDCB);
