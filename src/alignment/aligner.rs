@@ -4,8 +4,20 @@ use bio::alignment::pairwise::{self, Scoring};
 use bio::alignment::AlignmentOperation;
 
 use crate::alignment::mapper::{reverse_complement, CandidateRegion, SeedMapper};
+use crate::alignment::mapq::{compute_mapq, MAPQ_MAX};
 use crate::reference::{HashTable, ReferenceSequence};
 use crate::{Alignment, Read, ScoringParams};
+
+/// Configuration for secondary alignment output
+#[derive(Debug, Clone, Default)]
+pub struct SecondaryAlignmentConfig {
+    /// Maximum number of secondary alignments to output
+    pub max_secondary: usize,
+    /// Minimum score delta from primary to report secondary
+    pub min_score_delta: i32,
+    /// Minimum PHRED score delta for secondary
+    pub min_phred_delta: i32,
+}
 
 /// Aligner for performing Smith-Waterman alignment
 pub struct Aligner<'a> {
@@ -13,6 +25,7 @@ pub struct Aligner<'a> {
     reference: &'a ReferenceSequence,
     scoring: ScoringParams,
     min_score: i32,
+    secondary_config: SecondaryAlignmentConfig,
 }
 
 impl<'a> Aligner<'a> {
@@ -23,7 +36,14 @@ impl<'a> Aligner<'a> {
             reference,
             scoring: ScoringParams::default(),
             min_score: 22, // Default minimum alignment score
+            secondary_config: SecondaryAlignmentConfig::default(),
         }
+    }
+
+    /// Configure secondary alignment output
+    pub fn with_secondary_config(mut self, config: SecondaryAlignmentConfig) -> Self {
+        self.secondary_config = config;
+        self
     }
 
     /// Set scoring parameters
@@ -38,30 +58,71 @@ impl<'a> Aligner<'a> {
         self
     }
 
-    /// Align a read
+    /// Align a read (returns primary alignment only)
     pub fn align(&self, read: &Read) -> Alignment {
+        let alignments = self.align_all(read);
+        alignments
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| Alignment::unmapped(read))
+    }
+
+    /// Align a read and return all alignments (primary + secondary)
+    pub fn align_all(&self, read: &Read) -> Vec<Alignment> {
         // Map read to find candidate regions
         let mapper = SeedMapper::new(self.hash_table);
         let candidates = mapper.map(read);
 
         if candidates.is_empty() {
-            return Alignment::unmapped(read);
+            return vec![Alignment::unmapped(read)];
         }
 
-        // Try to align to each candidate region
-        let mut best_alignment: Option<Alignment> = None;
-        let mut best_score = self.min_score - 1;
+        // Try to align to each candidate region, collect all valid alignments
+        let mut alignments: Vec<Alignment> = Vec::new();
 
-        for candidate in candidates.iter().take(5) {
+        for candidate in candidates.iter().take(10) {
             if let Some(aln) = self.align_to_region(read, candidate) {
-                if aln.score > best_score {
-                    best_score = aln.score;
-                    best_alignment = Some(aln);
-                }
+                alignments.push(aln);
             }
         }
 
-        best_alignment.unwrap_or_else(|| Alignment::unmapped(read))
+        if alignments.is_empty() {
+            return vec![Alignment::unmapped(read)];
+        }
+
+        // Sort by score descending
+        alignments.sort_by(|a, b| b.score.cmp(&a.score));
+
+        // Calculate proper MAPQ using best vs second-best scores
+        let best_score = alignments[0].score;
+        let second_score = alignments.get(1).map_or(0, |a| a.score);
+        let snp_cost = self.scoring.mismatch_score.unsigned_abs() as i32;
+        let mapq = compute_mapq(
+            snp_cost.max(1),
+            best_score,
+            second_score,
+            read.sequence.len() as i32,
+        );
+
+        // Update primary alignment MAPQ
+        alignments[0].mapq = mapq.clamp(0, MAPQ_MAX) as u8;
+
+        // Mark and filter secondary alignments
+        let max_secondary = self.secondary_config.max_secondary;
+        if max_secondary > 0 && alignments.len() > 1 {
+            for aln in alignments.iter_mut().skip(1).take(max_secondary) {
+                aln.flag |= 0x100; // Secondary alignment flag
+                                   // Secondary alignments get MAPQ 0
+                aln.mapq = 0;
+            }
+            // Keep primary + max_secondary
+            alignments.truncate(1 + max_secondary);
+        } else {
+            // Only keep primary
+            alignments.truncate(1);
+        }
+
+        alignments
     }
 
     /// Align read to a specific candidate region
@@ -100,9 +161,6 @@ impl<'a> Aligner<'a> {
         // Build CIGAR string
         let cigar = Self::build_cigar(&alignment.operations);
 
-        // Calculate mapping quality (simplified)
-        let mapq = self.calculate_mapq(alignment.score, read.sequence.len());
-
         // Calculate alignment position
         let align_pos = ref_start + alignment.ystart as u64 + 1; // 1-based
 
@@ -124,7 +182,7 @@ impl<'a> Aligner<'a> {
             flag,
             ref_name,
             position: align_pos,
-            mapq,
+            mapq: 0, // Will be calculated in align_all() based on best/second-best scores
             cigar,
             mate_ref_name: "*".to_string(),
             mate_position: 0,
@@ -177,16 +235,6 @@ impl<'a> Aligner<'a> {
             cigar
         }
     }
-
-    /// Calculate mapping quality
-    fn calculate_mapq(&self, score: i32, read_len: usize) -> u8 {
-        // Simplified MAPQ calculation
-        // In reality, this should consider multiple alignments, etc.
-        let max_score = (read_len as i32) * self.scoring.match_score;
-        let score_ratio = (score as f64) / (max_score as f64);
-
-        (score_ratio * 60.0).clamp(0.0, 60.0) as u8
-    }
 }
 
 #[cfg(test)]
@@ -230,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn calculate_mapq_clamps_range() {
+    fn align_all_returns_primary_with_mapq() {
         let ref_dir = tiny_ref_dir();
         assert!(ref_dir.exists(), "missing tiny reference data");
 
@@ -238,8 +286,15 @@ mod tests {
         let reference = ReferenceSequence::load(&ref_dir).unwrap();
         let aligner = Aligner::new(&hash_table, &reference);
 
-        assert_eq!(aligner.calculate_mapq(0, 10), 0);
-        assert_eq!(aligner.calculate_mapq(10, 10), 60);
-        assert_eq!(aligner.calculate_mapq(20, 10), 60);
+        let read = Read {
+            name: "test".to_string(),
+            sequence: reference.get_sequence(163_840 + 71, 50),
+            quality: vec![b'I'; 50],
+        };
+
+        let alignments = aligner.align_all(&read);
+        assert!(!alignments.is_empty());
+        // Primary alignment should have MAPQ set
+        assert!(alignments[0].mapq > 0 || alignments[0].flag & 4 != 0);
     }
 }
