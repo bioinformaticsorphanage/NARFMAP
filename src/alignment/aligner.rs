@@ -297,4 +297,87 @@ mod tests {
         // Primary alignment should have MAPQ set
         assert!(alignments[0].mapq > 0 || alignments[0].flag & 4 != 0);
     }
+
+    // =========================================================================
+    // Tests ported from C++ SmithWatermanGtest.cpp
+    // These test the same concepts using bio crate's SW implementation
+    // =========================================================================
+
+    /// Port of SmithWaterman::NoSimilarity
+    /// All mismatches should give score 0 (bio crate clamps to 0)
+    #[test]
+    fn test_sw_no_similarity() {
+        use bio::alignment::pairwise::{self, Scoring};
+
+        let query = b"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"; // 48 C's
+        let database = b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; // 48 A's
+
+        let scoring = Scoring::from_scores(-6, -1, 1, -4); // gap_open, gap_extend, match, mismatch
+        let mut aligner =
+            pairwise::Aligner::with_capacity_and_scoring(query.len(), database.len(), scoring);
+        let alignment = aligner.local(query, database);
+
+        // All mismatches, score should be 0 (SW doesn't go negative)
+        assert_eq!(alignment.score, 0);
+    }
+
+    /// Port of SmithWaterman::AllSimilar
+    /// Identical sequences should give maximum score
+    #[test]
+    fn test_sw_all_similar() {
+        use bio::alignment::pairwise::{self, Scoring};
+
+        let sequence = b"ACGTTGAGGTTCCGTAGTATGACCTGTTTTAACGTTAGGCTGGAAAGT"; // 48 bases
+        let match_score = 2;
+        let mismatch_score = -3;
+
+        let scoring = Scoring::from_scores(-5, -4, match_score, mismatch_score);
+        let mut aligner =
+            pairwise::Aligner::with_capacity_and_scoring(sequence.len(), sequence.len(), scoring);
+        let alignment = aligner.local(sequence, sequence);
+
+        // Perfect match: score = len * match_score
+        assert_eq!(alignment.score, (sequence.len() as i32) * match_score);
+    }
+
+    /// Test SW with single mismatch
+    #[test]
+    fn test_sw_single_mismatch() {
+        use bio::alignment::pairwise::{self, Scoring};
+
+        let query = b"ACGTACGTACGTACGT";
+        let database = b"ACGTACGAACGTACGT"; // One mismatch at position 7 (T->A)
+
+        let match_score = 2;
+        let mismatch_score = -3;
+        let scoring = Scoring::from_scores(-5, -4, match_score, mismatch_score);
+        let mut aligner =
+            pairwise::Aligner::with_capacity_and_scoring(query.len(), database.len(), scoring);
+        let alignment = aligner.local(query, database);
+
+        // 15 matches + 1 mismatch = 15*2 + 1*(-3) = 30 - 3 = 27
+        assert_eq!(alignment.score, 27);
+    }
+
+    /// Test SW with gap
+    #[test]
+    fn test_sw_with_gap() {
+        use bio::alignment::pairwise::{self, Scoring};
+
+        let query = b"ACGTACGTACGT";
+        let database = b"ACGTACGT"; // Missing last 4 bases
+
+        let match_score = 2;
+        let mismatch_score = -3;
+        let gap_open = -5;
+        let gap_extend = -1;
+        let scoring = Scoring::from_scores(gap_open, gap_extend, match_score, mismatch_score);
+        let mut aligner =
+            pairwise::Aligner::with_capacity_and_scoring(query.len(), database.len(), scoring);
+        let alignment = aligner.local(query, database);
+
+        // Best alignment is matching the 8 common bases = 8 * 2 = 16
+        // (SW doesn't penalize unaligned overhangs in local mode)
+        assert_eq!(alignment.score, 16);
+    }
 }
