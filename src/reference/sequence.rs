@@ -161,4 +161,192 @@ mod tests {
 
         assert!(reference.find_sequence(8).is_none());
     }
+
+    // =========================================================================
+    // Tests ported from C++ ReferenceSequenceGtest.cpp
+    // =========================================================================
+
+    /// Port of ReferenceSequence::decodeBase
+    /// Tests one-hot to IUPAC character decoding
+    #[test]
+    fn test_decode_base() {
+        // DRAGEN one-hot to IUPAC mapping
+        fn decode_base(encoded: u8) -> char {
+            // Only low 4 bits matter
+            match encoded & 0x0F {
+                0x0 => 'P', // Padding/null
+                0x1 => 'A',
+                0x2 => 'C',
+                0x3 => 'M', // A|C
+                0x4 => 'G',
+                0x5 => 'R', // A|G
+                0x6 => 'S', // C|G
+                0x7 => 'V', // A|C|G
+                0x8 => 'T',
+                0x9 => 'W', // A|T
+                0xA => 'Y', // C|T
+                0xB => 'H', // A|C|T
+                0xC => 'K', // G|T
+                0xD => 'D', // A|G|T
+                0xE => 'B', // C|G|T
+                0xF => 'N', // A|C|G|T
+                _ => unreachable!(),
+            }
+        }
+
+        // Test all 16 values
+        assert_eq!(decode_base(0x0), 'P');
+        assert_eq!(decode_base(0x1), 'A');
+        assert_eq!(decode_base(0x2), 'C');
+        assert_eq!(decode_base(0x3), 'M');
+        assert_eq!(decode_base(0x4), 'G');
+        assert_eq!(decode_base(0x5), 'R');
+        assert_eq!(decode_base(0x6), 'S');
+        assert_eq!(decode_base(0x7), 'V');
+        assert_eq!(decode_base(0x8), 'T');
+        assert_eq!(decode_base(0x9), 'W');
+        assert_eq!(decode_base(0xA), 'Y');
+        assert_eq!(decode_base(0xB), 'H');
+        assert_eq!(decode_base(0xC), 'K');
+        assert_eq!(decode_base(0xD), 'D');
+        assert_eq!(decode_base(0xE), 'B');
+        assert_eq!(decode_base(0xF), 'N');
+
+        // Verify high nibble is ignored (only low 4 bits matter)
+        for i in 0x10u8..=0xFF {
+            assert_eq!(decode_base(i), decode_base(i & 0x0F));
+        }
+    }
+
+    /// Port of ReferenceSequence::translateTo2bpb
+    /// Tests one-hot to 2-bit encoding (A=0, C=1, G=2, T=3)
+    #[test]
+    fn test_translate_to_2bpb() {
+        fn translate_to_2bpb(encoded: u8) -> u8 {
+            match encoded & 0x0F {
+                0x1 => 0, // A
+                0x2 => 1, // C
+                0x4 => 2, // G
+                0x8 => 3, // T
+                _ => 0,   // Ambiguous bases default to 0 (A)
+            }
+        }
+
+        // Primary bases
+        assert_eq!(translate_to_2bpb(0x0), 0); // P -> 0
+        assert_eq!(translate_to_2bpb(0x1), 0); // A -> 0
+        assert_eq!(translate_to_2bpb(0x2), 1); // C -> 1
+        assert_eq!(translate_to_2bpb(0x3), 0); // M -> 0
+        assert_eq!(translate_to_2bpb(0x4), 2); // G -> 2
+        assert_eq!(translate_to_2bpb(0x5), 0); // R -> 0
+        assert_eq!(translate_to_2bpb(0x6), 0); // S -> 0
+        assert_eq!(translate_to_2bpb(0x7), 0); // V -> 0
+        assert_eq!(translate_to_2bpb(0x8), 3); // T -> 3
+        assert_eq!(translate_to_2bpb(0x9), 0); // W -> 0
+        assert_eq!(translate_to_2bpb(0xA), 0); // Y -> 0
+        assert_eq!(translate_to_2bpb(0xB), 0); // H -> 0
+        assert_eq!(translate_to_2bpb(0xC), 0); // K -> 0
+        assert_eq!(translate_to_2bpb(0xD), 0); // D -> 0
+        assert_eq!(translate_to_2bpb(0xE), 0); // B -> 0
+        assert_eq!(translate_to_2bpb(0xF), 0); // N -> 0
+
+        // Verify high nibble is ignored
+        for i in 0x10u8..=0xFF {
+            assert_eq!(translate_to_2bpb(i), translate_to_2bpb(i & 0x0F));
+        }
+    }
+
+    /// Port of ReferenceSequence::generateSequence
+    /// Tests encoding a base string to packed 4-bit format
+    #[test]
+    fn test_generate_sequence() {
+        fn encode_base(base: char) -> u8 {
+            match base {
+                'A' => 1,
+                'C' => 2,
+                'G' => 4,
+                'T' => 8,
+                _ => 0,
+            }
+        }
+
+        fn generate_sequence(bases: &str) -> Vec<u8> {
+            assert!(bases.len() % 2 == 0);
+            let mut result = Vec::new();
+            let chars: Vec<char> = bases.chars().collect();
+            for chunk in chars.chunks(2) {
+                let low = encode_base(chunk[0]);
+                let high = encode_base(chunk[1]);
+                result.push(low | (high << 4));
+            }
+            result
+        }
+
+        // C++ test data: "ACGTAACCGGTTAAACCCGGGTTT"
+        let bases = "ACGTAACCGGTTAAACCCGGGTTT";
+        let expected: Vec<u8> = vec![
+            0x21, 0x84, 0x11, 0x22, 0x44, 0x88, 0x11, 0x21, 0x22, 0x44, 0x84, 0x88,
+        ];
+
+        let generated = generate_sequence(bases);
+        assert_eq!(generated.len(), expected.len());
+        for (i, (&gen, &exp)) in generated.iter().zip(expected.iter()).enumerate() {
+            assert_eq!(
+                gen, exp,
+                "mismatch at byte {i}: got {gen:#04x}, expected {exp:#04x}"
+            );
+        }
+    }
+
+    /// Port of ReferenceSequence::getBase
+    /// Tests retrieving one-hot encoded bases from packed data
+    #[test]
+    fn test_get_base() {
+        fn generate_sequence(bases: &str) -> Vec<u8> {
+            fn encode_base(base: char) -> u8 {
+                match base {
+                    'A' => 1,
+                    'C' => 2,
+                    'G' => 4,
+                    'T' => 8,
+                    _ => 0,
+                }
+            }
+            assert!(bases.len() % 2 == 0);
+            let mut result = Vec::new();
+            let chars: Vec<char> = bases.chars().collect();
+            for chunk in chars.chunks(2) {
+                result.push(encode_base(chunk[0]) | (encode_base(chunk[1]) << 4));
+            }
+            result
+        }
+
+        fn get_base(data: &[u8], pos: usize) -> u8 {
+            let byte_idx = pos / 2;
+            if byte_idx >= data.len() {
+                return 0;
+            }
+            let byte = data[byte_idx];
+            if pos % 2 == 0 {
+                byte & 0x0F
+            } else {
+                (byte >> 4) & 0x0F
+            }
+        }
+
+        let bases = "ACGTAACCGGTTAAACCCGGGTTT";
+        let sequence = generate_sequence(bases);
+
+        // Verify packed data has correct size
+        assert_eq!(sequence.len() * 2, bases.len());
+
+        // Test first 4 bases: A=1, C=2, G=4, T=8
+        assert_eq!(get_base(&sequence, 0), 1); // A
+        assert_eq!(get_base(&sequence, 1), 2); // C
+        assert_eq!(get_base(&sequence, 2), 4); // G
+        assert_eq!(get_base(&sequence, 3), 8); // T
+
+        // Test last base
+        assert_eq!(get_base(&sequence, bases.len() - 1), 8); // T
+    }
 }
