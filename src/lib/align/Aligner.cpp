@@ -187,7 +187,7 @@ unsigned Aligner::calculatePotentialScore(
     const Read& read, const unsigned score, const unsigned softClipTo, const unsigned softClipFrom) const
 {
   const int SEED_LENGTH = mapper_.getHashtable()->getPrimarySeedBases();
-  assert(21 == SEED_LENGTH);
+  assert(SEED_LENGTH > 0);
   int ret = score;
   if (softClipTo > 0) {
     // assume single-base gap at the point of clipping

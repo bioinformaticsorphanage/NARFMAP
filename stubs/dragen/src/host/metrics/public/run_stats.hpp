@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstdint>
 //
 // RP: HA! HA! HA! That's what you get when you write code logging to cout all
 // over the place!

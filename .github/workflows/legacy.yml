@@ -26,6 +26,8 @@ jobs:
         env:
           HAS_GTEST: 0
           STATIC: 1
+      - name: Test gzip reference reading
+        run: python3 tests/test_gzip_reference.py
       - name: make install
         run: sudo make install
       - uses: actions/upload-artifact@v4

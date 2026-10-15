@@ -1138,11 +1138,30 @@ char* generateHashTable(hashTableConfig_t* config, int argc, char* argv[])
   }
 
   struct stat s;
-  int         ret      = stat(config->refInput, &s);
-  int64_t     inputLen = ret < 0 ? -1 : s.st_size;
-  if (!(inpRefFile = fopen(config->refInput, "r"))) {
-    snprintf(ERR_MSG, sizeof(ERR_MSG), "Cannot open reference input file %s\n", config->refInput);
-    return ERR_MSG;
+  int ret = stat(config->refInput, &s);
+  int64_t inputLen = ret < 0 ? -1 : s.st_size;
+
+  gzFile inpRefGzFile = NULL;
+
+  size_t refInputLen = strlen(config->refInput);
+  if (refInputLen >= 3 &&
+      strcmp(config->refInput + refInputLen - 3, ".gz") == 0) {
+    inpRefGzFile = gzopen(config->refInput, "rb");
+    if (!inpRefGzFile) {
+      snprintf(ERR_MSG, sizeof(ERR_MSG),
+              "Cannot open compressed reference input file %s\n",
+              config->refInput);
+      return ERR_MSG;
+    }
+    inpRefFile = NULL;
+  } else {
+    inpRefFile = fopen(config->refInput, "r");
+    if (!inpRefFile) {
+      snprintf(ERR_MSG, sizeof(ERR_MSG),
+              "Cannot open reference input file %s\n",
+              config->refInput);
+      return ERR_MSG;
+    }
   }
 
 #ifndef LOCAL_BUILD
@@ -1152,8 +1171,6 @@ char* generateHashTable(hashTableConfig_t* config, int argc, char* argv[])
   // for duplicate names.
   ReferenceNamesInit();
 #endif
-
-  gzFile inpRefGzFile = NULL;
 
   // Read input FASTA (reference, decoy, pop alt contig) into sequence records
   printf("\nReading reference input file %s", config->refInput);
@@ -1189,9 +1206,22 @@ char* generateHashTable(hashTableConfig_t* config, int argc, char* argv[])
     if (!ret) {
       if (inpRefFile) {
         fclose(inpRefFile);
+        inpRefFile = NULL;
       }
       if (inpRefGzFile) {
-        gzclose(inpRefGzFile);
+        int readError = Z_OK;
+        const char* readMessage = gzerror(inpRefGzFile, &readError);
+        if (readError != Z_OK) {
+          snprintf(ERR_MSG, sizeof(ERR_MSG), "Cannot read compressed reference input: %s\n", readMessage);
+        }
+        int closeError = gzclose(inpRefGzFile);
+        inpRefGzFile = NULL;
+        if (readError != Z_OK) return ERR_MSG;
+        if (closeError != Z_OK) {
+          snprintf(
+              ERR_MSG, sizeof(ERR_MSG), "Cannot close compressed reference input: %s\n", zError(closeError));
+          return ERR_MSG;
+        }
       }
 #if 0
       printf(
