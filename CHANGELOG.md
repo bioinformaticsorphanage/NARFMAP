@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-10-23
+
+### Fixed
+
+- Add the missing `#include <cstdint>` so the C++ aligner builds with current libstdc++ ([#13](https://github.com/bioinformaticsorphanage/NARFMAP/pull/13)).
+- Open gzip-compressed references with `gzopen` and report truncated or corrupt gzip input, so a `.gz` FASTA no longer writes a wrong `reference_sequence0` into `hash_table.cfg` ([#13](https://github.com/bioinformaticsorphanage/NARFMAP/pull/13), [#10](https://github.com/bioinformaticsorphanage/NARFMAP/issues/10)).
+- Allow any positive seed length (`assert(SEED_LENGTH > 0)`) so small nf-core test references no longer abort on `assert(21 == SEED_LENGTH)` ([#13](https://github.com/bioinformaticsorphanage/NARFMAP/pull/13), [#10](https://github.com/bioinformaticsorphanage/NARFMAP/issues/10), [nf-core/modules#13000](https://github.com/nf-core/modules/pull/13000)).
+
+### CI
+
+- Restore legacy artifact uploads and the Nix `nix build` entrypoint ([#14](https://github.com/bioinformaticsorphanage/NARFMAP/pull/14)).
+
 ## [1.4.2] - 2024-07-07
 
 ### Fixed
@@ -51,7 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - mapq0 fix
 
-[unreleased]: https://github.com/Emiller88/NARFMAP/compare/v1.4.2...HEAD
+[unreleased]: https://github.com/bioinformaticsorphanage/NARFMAP/compare/1.4.3...HEAD
+[1.4.3]: https://github.com/bioinformaticsorphanage/NARFMAP/compare/1.4.2...1.4.3
 [1.4.2]: https://github.com/bioinformaticsorphanage/NARFMAP/compare/1.4.1...1.4.2
 [1.4.1]: https://github.com/bioinformaticsorphanage/NARFMAP/compare/1.4.0...1.4.1
 [1.4.0]: https://github.com/Emiller88/NARFMAP/compare/v1.3.1...v1.4.0
