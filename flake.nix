@@ -47,7 +47,7 @@
 
         packages.dragmap = pkgs.stdenv.mkDerivation {
           pname = "NARFMAP";
-          version = "1.4.2";
+          version = "1.4.3";
 
           src = ./.;
 

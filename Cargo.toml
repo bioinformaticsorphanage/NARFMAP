@@ -1,6 +1,6 @@
 [package]
 name = "narfmap"
-version = "1.4.2"
+version = "1.4.3"
 edition = "2021"
 authors = ["Original authors <authors@example.com>"]
 description = "NARFMAP - A Rust implementation of the Dragen mapper/aligner"
